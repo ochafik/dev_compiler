@@ -11,8 +11,8 @@ export default class foo {
     if (!A$bound) {
       A$bound = true;
 
-      A$imports.B = B;
-      A$imports.C = C;
+      A$imports.B = foo.B;
+      A$imports.C = foo.C;
     }
     return A;
   }
@@ -21,7 +21,7 @@ export default class foo {
     if (!B$bound) {
       B$bound = true;
 
-      B$imports.C = C;
+      B$imports.C = foo.C;
     }
     return B;
   }
@@ -30,7 +30,7 @@ export default class foo {
     if (!C$bound) {
       C$bound = true;
 
-      C$imports.A = A;
+      C$imports.A = foo.A;
     }
     return C;
   }
