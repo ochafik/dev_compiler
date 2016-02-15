@@ -34,7 +34,7 @@ JavaScript does not currently support static types, but there are a few vendor-s
 | Type System | Generics | Type Syntax | primitive nullable | Object nullable | `?nullable` | `!notNullable` |
 | ----------- | -------- | ----------- | ------------------ | --------------- | ----------- | -------------- |
 | [Dart](https://www.dartlang.org/docs/spec/) | covariant | Dart | yes | yes | `no(*)` | `no(*)` |
-| [Flow](http://flowtype.org/docs/nullable-types.html) | ? | TS / comment | non-nullable | non-nullable | yes | no |
+| [Flow](http://flowtype.org/docs/type-annotations.html#_) | ? | TS / comment | non-nullable | non-nullable | [yes](http://flowtype.org/docs/nullable-types.html) | no |
 | [TypeScript](https://github.com/Microsoft/TypeScript/blob/master/doc/spec.md) | bivariant | TS | nullable | nullable | no | no |
 | [Closure](https://developers.google.com/closure/compiler/docs/js-for-compiler) | invariant | comment | non-nullable | nullable | yes | yes |
 | [V8's SoundScript](https://developers.google.com/v8/experiments) | ? | TS | ? | ? | ? | ? |
