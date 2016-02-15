@@ -1,6 +1,6 @@
-We want DDC to generate idiomatic ES6+ code that behaves well in a variety of use-case / tooling setups.
+DDC aims to generate idiomatic ES6+ code that behaves well in a variety of use-case / tooling setups, so that Dart is a good JS citizen.
 
-# Tool
+# Tools
 
 Here are some tools which we might like to be able to consume DDC's output:
 
