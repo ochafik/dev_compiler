@@ -10,9 +10,8 @@ Here are some tools which we might like to be able to consume DDC's output:
 | [Rollup.js](rollupjs.org) | es6 | yes | n/a | [experimental since 0.25.4](https://github.com/rollup/rollup/pull/506) |
 | [Babel](https://babeljs.io) | node, es6 | ? | Flow | ? |
 | [Closure Compiler](https://developers.google.com/closure/compiler/) | closure, es6 | no | Closure | [in progress](https://github.com/dart-lang/dev_compiler/issues/312) |
-| Closure+ES6_TYPED | es6 | no | TypeScript | [in progress](https://github.com/dart-lang/dev_compiler/issues/312)
 | [Flow](https://flowtype.org) | es6 | yes | Flow | no |
-| [TypeScript](httphttps://babeljs.io://typescriptlang.org) | TS, es6 | yes? | TypeScript | no |
+| [TypeScript](httphttps://babeljs.io://typescriptlang.org) / Closure+ES6_TYPED | TS, es6 | yes? | TypeScript | in progress |
 
 # Module formats
 
