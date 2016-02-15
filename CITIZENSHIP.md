@@ -1,22 +1,18 @@
 We want DDC to generate idiomatic ES6+ code that behaves well in a variety of use-case / tooling setups.
 
+# Tool
+
 Here are some tools which we might like to be able to consume DDC's output:
 
-| Tool | Modules | Module Cycles | Type System |
-| ---- | ------- | ------------- | ----------- |
-| [node.js](http://nodejs.org) | node ([es6](https://github.com/ModuleLoader/es6-module-loader) with polyfill) | yes | n/a |
-| [Rollup.js](rollupjs.org) | es6 | yes | n/a |
-| [Babel](https://babeljs.io) | node, es6 | ? | Flow |
-| [Closure Compiler](https://developers.google.com/closure/compiler/) | closure, es6 | no | Closure |
-| Closure+ES6_TYPED | es6 | no | TypeScript |
-| [Flow](https://flowtype.org) | es6 | yes | Flow |
-| [TypeScript](httphttps://babeljs.io://typescriptlang.org) | TS, es6 | yes? | TypeScript |
-
-Notes:
-- DDC has experimental support for node.js (see [example](https://github.com/dart-lang/dev_compiler/blob/master/tool/node_test.sh))
-- Rollup supports DDC's es6 output as of version 0.25.4 (see https://github.com/rollup/rollup/pull/506)
-- DDC can emit experimental TypeScript types with the `--closure` flag.
-- Closure Compiler support is tracked as https://github.com/dart-lang/dev_compiler/issues/312 (simple) and https://github.com/dart-lang/dev_compiler/issues/311 (advanced)
+| Tool | Modules | Module Cycles | Type System | DDC support |
+| ---- | ------- | ------------- | ----------- | ----------- |
+| [node.js](http://nodejs.org) | node ([es6](https://github.com/ModuleLoader/es6-module-loader) with polyfill) | yes | n/a | [experimental](https://github.com/dart-lang/dev_compiler/blob/master/tool/node_test.sh) |
+| [Rollup.js](rollupjs.org) | es6 | yes | n/a | [experimental since 0.25.4](https://github.com/rollup/rollup/pull/506) |
+| [Babel](https://babeljs.io) | node, es6 | ? | Flow | ? |
+| [Closure Compiler](https://developers.google.com/closure/compiler/) | closure, es6 | no | Closure | [in progress](https://github.com/dart-lang/dev_compiler/issues/312) |
+| Closure+ES6_TYPED | es6 | no | TypeScript | [in progress](https://github.com/dart-lang/dev_compiler/issues/312)
+| [Flow](https://flowtype.org) | es6 | yes | Flow | no |
+| [TypeScript](httphttps://babeljs.io://typescriptlang.org) | TS, es6 | yes? | TypeScript | no |
 
 # Module formats
 
