@@ -1,48 +1,58 @@
 We want DDC to generate idiomatic ES6+ code that behaves well in a variety of use-case / tooling setups.
 
-# JS Tools
+Here are some tools that can consume DDC's output:
 
-Here are some tools / environments we may want to interface with:
-- [node.js](http://nodejs.org)
-- [Babel](https://babeljs.io)
-- [Closure Compiler](https://developers.google.com/closure/compiler/)
-- [Flow](https://flowtype.org)
-- [TypeScript](httphttps://babeljs.io://typescriptlang.org)
-- [Rollup.js](rollupjs.org)
+| Tool | Modules | Module Cycles | Type System |
+| ---- | ------- | ------------- | ----------- |
+| [node.js](http://nodejs.org) | node ([es6](https://github.com/ModuleLoader/es6-module-loader) with polyfill) | yes | n/a |
+| [Rollup.js](rollupjs.org) | es6 | yes | n/a |
+| [Babel](https://babeljs.io) | node, es6 | ? | Flow |
+| [Closure Compiler](https://developers.google.com/closure/compiler/) | closure, es6 | no | Closure |
+| Closure+ES6_TYPED | es6 | no | TypeScript |
+| [Flow](https://flowtype.org) | es6 | yes | Flow |
+| [TypeScript](httphttps://babeljs.io://typescriptlang.org) | TS, es6 | yes? | TypeScript |
 
 # Module formats
 
 We currently support the following module formats
-- node.js (with `--modules=node`)
-- ES6 modules (experimental, with `--modules=es6`)
-- Custom Dart modules (default, with `--modules=legacy`)
+- Custom Dart modules (_default_, with `--modules=legacy`)
+- [node.js modules](https://nodejs.org/api/modules.html) (with `--modules=node`, see [example](https://github.com/dart-lang/dev_compiler/blob/master/tool/node_test.sh))
+- [ES6 modules](https://developer.mozilla.org/en/docs/web/javascript/reference/statements/import) (experimental, with `--modules=es6`)
 
-We hope to be able to default to ES6 modules when browsers (and node.js) support them.
+We hope to be able to default to ES6 modules when Chrome and node.js support them.
 
 # Types
 
-JavaScript does not currently support static types, but there are a few vendor-specific language extensions that bring static type checks to help validate the code and/or perform type-based optimizations.
+JavaScript does not currently support static types, but there are a few vendor-specific language extensions allow static type checks  and/or perform type-based optimizations.
 
-## Type syntax
+| Type System | Generics | Type Syntax | primitive nullable | Object nullable | `?nullable` | `!notNullable` |
+| ----------- | -------- | ----------- | ------------------ | --------------- | ----------- | -------------- |
+| [Dart](https://www.dartlang.org/docs/spec/) | covariant | Dart | yes | yes | `no(*)` | `no(*)` |
+| [Flow](http://flowtype.org/docs/nullable-types.html) | ? | TS / comment | non-nullable | non-nullable | yes | no |
+| [TypeScript](https://github.com/Microsoft/TypeScript/blob/master/doc/spec.md) | bivariant | TS | nullable | nullable | no | no |
+| [Closure](https://developers.google.com/closure/compiler/docs/js-for-compiler) | invariant | comment | non-nullable | nullable | yes | yes |
+| [V8's SoundScript](https://developers.google.com/v8/experiments) | ? | TS | ? | ? | ? | ? |
 
-The JS ecosystem is split between the following main type syntaxes:
-- No types (ES6, V8)
-- Types in comments (Closure, Flow)
-- Types in the syntax (Flow, TypeScript, Closure ES6_TYPED, upcoming [V8's SoundScript](https://developers.google.com/v8/experiments))
-- Tolerance to types in the syntax (TypeScript)
+Notes:
+- _Type Syntax: TS_ means TypeScript / ActionScript 3 / Scala-like syntax for types:
 
-## Type semantics
+  ```typescript
+    function foo<T>(x: T): void {}
+    type SomeCallbackType = (x: Object) => number;
+  ```
 
-### Nullability
+- `(*)`: Dart will soon support nullable types, although that might be a breaking language change.
+- Closure supports a TypeScript-like syntax with `--language_in=ES6_TYPED`, but it still warns about assigning nullable values to primitives.
+- There are more differences between these type-systems (intersection types, interface types...) but the ones highlighted above seem the most relevant to Dart -> JS compilation.
+- Nullability:
 
-There are the differences between the major systems:
-- Closure knows nullable & non-nullable types, with primitives non-nullable by default and Object types nullable by default. Any type `t` can be made nullable with `?t` and non-nullable with `!t`.
-- Flow knows nullable types: any type `t` can be made nullable with `?t`. All types are non-nullable by default.
-- TypeScript does not care about nullability: the `Null` type is a subtype of all types.
-- Closure ES6_TYPED does not support type nullability (matches TypeScript syntax in which it cannot be expressed), warns about `null` passed to primitive args.
+  - `?nullable` means any type `t` can be made nullable as `?t`.
+  - `!nullable` means any type `t` can be made non-nullable as `!t`.
+  - In TypeScript, the `Null` type is a subtype of all types.
 
-### Generics
+- Generics 101:
 
-- TypeScript supports "bi-variant" generics, i.e. `List<number>` accepts both `Iterable<number>` and `List<int>`.
-- Closure provides "invariant" generics
-- TODO(ochafik): describe other systems + Dart.
+  - _bivariant_ means `List<number>` variables accept both `Iterable<number>` and `List<int>` values.
+  - _covariant_ means `List<number>` variables accept `List<int>` values but not `Iterable<number>`.
+  - _contravariant_ means `List<number>` variables accept `Iterable<number>` values but not `List<int>`.
+  - _invariant_ means `List<number>` vars only accept `List<number>` values.
