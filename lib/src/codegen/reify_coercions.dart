@@ -2,16 +2,14 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-library dev_compiler.src.codegen.reify_coercions;
-
 import 'package:analyzer/analyzer.dart' as analyzer;
 import 'package:analyzer/src/generated/ast.dart';
 import 'package:analyzer/src/generated/element.dart';
+import 'package:analyzer/src/generated/type_system.dart'
+    show StrongTypeSystemImpl;
 import 'package:logging/logging.dart' as logger;
 
-import 'package:dev_compiler/devc.dart' show AbstractCompiler;
-import 'package:dev_compiler/src/checker/rules.dart';
-import 'package:dev_compiler/src/info.dart';
+import '../info.dart';
 
 import 'ast_builder.dart';
 
@@ -30,60 +28,13 @@ class NewTypeIdDesc {
   /// If null, then this is not a library level identifier (i.e. it's
   /// a type parameter, or a special type like void, dynamic, etc)
   LibraryElement importedFrom;
+
   /// True => use/def in same library
   bool fromCurrent;
+
   /// True => not a source variable
   bool synthetic;
   NewTypeIdDesc({this.fromCurrent, this.importedFrom, this.synthetic});
-}
-
-class _Inference extends DownwardsInference {
-  TypeManager _tm;
-
-  _Inference(TypeRules rules, this._tm) : super(rules);
-
-  @override
-  void annotateCastFromDynamic(Expression e, DartType t) {
-    var cast = Coercion.cast(e.staticType, t);
-    var info = new DynamicCast(rules, e, cast);
-    CoercionInfo.set(e, info);
-  }
-
-  @override
-  void annotateListLiteral(ListLiteral e, List<DartType> targs) {
-    var tNames = targs.map(_tm.typeNameFromDartType).toList();
-    e.typeArguments = AstBuilder.typeArgumentList(tNames);
-    var listT = rules.provider.listType.substitute4(targs);
-    e.staticType = listT;
-  }
-
-  @override
-  void annotateMapLiteral(MapLiteral e, List<DartType> targs) {
-    var tNames = targs.map(_tm.typeNameFromDartType).toList();
-    e.typeArguments = AstBuilder.typeArgumentList(tNames);
-    var mapT = rules.provider.mapType.substitute4(targs);
-    e.staticType = mapT;
-  }
-
-  @override
-  void annotateInstanceCreationExpression(
-      InstanceCreationExpression e, List<DartType> targs) {
-    var tNames = targs.map(_tm.typeNameFromDartType).toList();
-    var cName = e.constructorName;
-    var id = cName.type.name;
-    var typeName = AstBuilder.typeName(id, tNames);
-    cName.type = typeName;
-    var newType =
-        (e.staticType.element as ClassElement).type.substitute4(targs);
-    e.staticType = newType;
-    typeName.type = newType;
-  }
-
-  @override
-  void annotateFunctionExpression(FunctionExpression e, DartType returnType) {
-    // Implicitly changes e.staticType
-    (e.element as ExecutableElementImpl).returnType = returnType;
-  }
 }
 
 // This class implements a pass which modifies (in place) the ast replacing
@@ -93,17 +44,17 @@ class CoercionReifier extends analyzer.GeneralizingAstVisitor<Object> {
   final TypeManager _tm;
   final VariableManager _vm;
   final LibraryUnit _library;
-  final _Inference _inferrer;
+  final StrongTypeSystemImpl _typeSystem;
 
   CoercionReifier._(
-      this._cm, this._tm, this._vm, this._library, this._inferrer);
+      this._cm, this._tm, this._vm, this._library, this._typeSystem);
 
-  factory CoercionReifier(LibraryUnit library, AbstractCompiler compiler) {
+  factory CoercionReifier(
+      LibraryUnit library, StrongTypeSystemImpl typeSystem) {
     var vm = new VariableManager();
     var tm = new TypeManager(library.library.element.enclosingElement, vm);
     var cm = new CoercionManager(vm, tm);
-    var inferrer = new _Inference(compiler.rules, tm);
-    return new CoercionReifier._(cm, tm, vm, library, inferrer);
+    return new CoercionReifier._(cm, tm, vm, library, typeSystem);
   }
 
   // This should be the entry point for this class.  Entering via the
@@ -111,37 +62,37 @@ class CoercionReifier extends analyzer.GeneralizingAstVisitor<Object> {
   // to discharging the collected definitions.
   // Returns the set of new type identifiers added by the reifier
   Map<Identifier, NewTypeIdDesc> reify() {
-    _library.partsThenLibrary.forEach(generateUnit);
+    _library.partsThenLibrary.forEach(visitCompilationUnit);
     return _tm.addedTypes;
-  }
-
-  void generateUnit(CompilationUnit unit) {
-    visitCompilationUnit(unit);
   }
 
   @override
   Object visitExpression(Expression node) {
     var info = CoercionInfo.get(node);
     if (info is InferredTypeBase) {
-      return _visitInferredTypeBase(info);
+      return _visitInferredTypeBase(info, node);
     } else if (info is DownCast) {
-      return _visitDownCast(info);
+      return _visitDownCast(info, node);
     }
     return super.visitExpression(node);
   }
 
   ///////////////// Private //////////////////////////////////
 
-  Object _visitInferredTypeBase(InferredTypeBase node) {
-    var expr = node.node;
-    var success = _inferrer.inferExpression(expr, node.type, <String>[]);
-    assert(success);
+  Object _visitInferredTypeBase(InferredTypeBase node, Expression expr) {
+    DartType t = node.type;
+    if (!_typeSystem.isSubtypeOf(_getStaticType(expr), t)) {
+      if (_getStaticType(expr).isDynamic) {
+        var cast = Coercion.cast(expr.staticType, t);
+        var info = new DynamicCast(_typeSystem, expr, cast);
+        CoercionInfo.set(expr, info);
+      }
+    }
     expr.visitChildren(this);
     return null;
   }
 
-  Object _visitDownCast(DownCast node) {
-    var expr = node.node;
+  Object _visitDownCast(DownCast node, Expression expr) {
     var parent = expr.parent;
     expr.visitChildren(this);
     Expression newE = _cm.coerceExpression(expr, node.cast);
@@ -159,6 +110,10 @@ class CoercionReifier extends analyzer.GeneralizingAstVisitor<Object> {
     Object ret = super.visitCompilationUnit(unit);
     _cm.exitCompilationUnit(unit);
     return ret;
+  }
+
+  DartType _getStaticType(Expression expr) {
+    return expr.staticType ?? DynamicTypeImpl.instance;
   }
 }
 
@@ -196,6 +151,7 @@ class CoercionManager {
   void enterCompilationUnit(CompilationUnit unit) {
     _tm.enterCompilationUnit(unit);
   }
+
   void exitCompilationUnit(CompilationUnit unit) {
     _tm.exitCompilationUnit(unit);
   }
@@ -391,7 +347,6 @@ class TypeManager {
 
   FunctionTypeAlias _newResolvedTypedef(
       FunctionType type, List<TypeParameterType> ftvs) {
-
     // The name of the typedef (unresolved at this point)
     // TODO(leafp): better naming.
     SimpleIdentifier t = freshTypeDefVariable("CastType");
@@ -430,7 +385,7 @@ class TypeManager {
     // This is the type corresponding to the typedef.  Note that
     // almost all methods on this type delegate to the element, so it
     // cannot be safely be used for anything until the element is fully resolved
-    FunctionTypeImpl substType = new FunctionTypeImpl.con2(element);
+    FunctionTypeImpl substType = new FunctionTypeImpl.forTypedef(element);
     element.type = substType;
     // Link the type and the element into the identifier for the typedef
     t.staticType = substType;

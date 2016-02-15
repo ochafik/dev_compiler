@@ -2,42 +2,69 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-@JsName(name: 'window')
+@js.JS('window')
 library dom;
 
+import 'package:js/js.dart' as js;
 
-class JsName {
-  /// The JavaScript name.
-  /// Used for classes and libraries.
-  /// Note that this could be an expression, e.g. `lib.TypeName` in JS, but it
-  /// should be kept simple, as it will be generated directly into the code.
-  final String name;
-  const JsName({this.name});
-}
+@js.JS()
+class Window {}
+
 class Overload {
   const Overload();
 }
 const overload = const Overload();
 
 external Document get document;
+external Window get window;
 
-@JsName(name: 'Document')
-abstract class Document {
+@js.JS()
+abstract class Document extends Node {
   Element createElement(String name);
   Element querySelector(String selector);
+
+  HTMLElement head;
+  HTMLElement body;
 }
 
-@JsName(name: 'Element')
-abstract class Element {
+@js.JS()
+class Blob {
+  external Blob(blobParts, {String type});
+}
+
+class CustomEvent {
+  external CustomEvent(String type, {detail, bubbles, cancelable});
+}
+
+@js.JS()
+abstract class Element extends Node {
   void addEventListener(String type, EventListener callback, [bool capture]);
   String textContent;
-  NodeList get childNodes;
 }
 
-@JsName()
-class Node {}
+@js.JS()
+abstract class HTMLElement extends Element {
+  String innerHTML;
+  HTMLCollection get children;
+}
 
-@JsName()
+@js.JS()
+abstract class Node {
+  bool hasChildNodes();
+  NodeList get childNodes;
+
+  Node insertBefore(Node node, [Node child]);
+  Node appendChild(Node node);
+  Node replaceChild(Node node, Node child);
+  Node removeChild(Node child);
+}
+
+abstract class HTMLCollection {
+  int get length;
+  external Element operator [](num index);
+}
+
+@js.JS()
 class NodeList {
   external NodeList();
   external num get length;
@@ -50,25 +77,37 @@ class NodeList {
 
 typedef void EventListener(Event e);
 
-@JsName()
+@js.JS()
 abstract class Event {}
 
-@JsName(name: 'HTMLInputElement')
-abstract class InputElement extends Element {
+// TODO(jmesserly): rename these
+@js.JS('HTMLInputElement')
+abstract class InputElement extends HTMLElement {
   String value;
 }
 
-@JsName(name: 'HTMLCanvasElement')
-abstract class CanvasElement extends Element {
+@js.JS('HTMLCanvasElement')
+abstract class CanvasElement extends HTMLElement {
   RenderingContext getContext(String contextId);
 }
+
+@js.JS('HTMLDivElement')
+abstract class DivElement extends HTMLElement {
+  RenderingContext getContext(String contextId);
+}
+
+@js.JS('HTMLScriptElement')
+abstract class ScriptElement extends HTMLElement {
+  String type;
+}
+
 
 // TODO(jmesserly): union type of CanvasRenderingContext2D and
 // WebGLRenderingContext
 abstract class RenderingContext {}
 
 // http://www.w3.org/html/wg/drafts/2dcontext/html5_canvas_CR/
-@JsName()
+@js.JS()
 abstract class CanvasRenderingContext2D
     implements CanvasDrawingStyles, CanvasPathMethods, RenderingContext {
 
@@ -184,23 +223,23 @@ abstract class CanvasPathMethods {
       [bool anticlockwise]);
 }
 
-@JsName()
+@js.JS()
 abstract class CanvasGradient {
   // opaque object
   void addColorStop(num offset, String color);
 }
 
-@JsName()
+@js.JS()
 abstract class CanvasPattern {
   // opaque object
 }
 
-@JsName()
+@js.JS()
 abstract class TextMetrics {
   num get width;
 }
 
-@JsName()
+@js.JS()
 abstract class ImageData {
   int get width;
   int get height;

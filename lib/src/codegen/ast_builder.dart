@@ -2,8 +2,6 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-library dev_compiler.src.codegen.ast_builder;
-
 import 'package:analyzer/src/generated/ast.dart';
 import 'package:analyzer/src/generated/scanner.dart';
 import 'package:analyzer/src/generated/utilities_dart.dart';
@@ -21,11 +19,13 @@ class AstBuilder {
     return RawAstBuilder.identifierFromString(name);
   }
 
-  static PrefixedIdentifier prefixedIdentifier(Identifier pre, Identifier id) {
+  static PrefixedIdentifier prefixedIdentifier(
+      SimpleIdentifier pre, SimpleIdentifier id) {
     return RawAstBuilder.prefixedIdentifier(pre, id);
   }
 
-  static TypeParameter typeParameter(Identifier name, [TypeName bound = null]) {
+  static TypeParameter typeParameter(SimpleIdentifier name,
+      [TypeName bound = null]) {
     return RawAstBuilder.typeParameter(name, bound);
   }
 
@@ -47,8 +47,11 @@ class AstBuilder {
     return RawAstBuilder.typeName(id, argList);
   }
 
-  static FunctionTypeAlias functionTypeAlias(TypeName ret, Identifier name,
-      List<TypeParameter> tParams, List<FormalParameter> params) {
+  static FunctionTypeAlias functionTypeAlias(
+      TypeName ret,
+      SimpleIdentifier name,
+      List<TypeParameter> tParams,
+      List<FormalParameter> params) {
     TypeParameterList tps =
         (tParams.length == 0) ? null : typeParameterList(tParams);
     FormalParameterList fps = formalParameterList(params);
@@ -93,6 +96,18 @@ class AstBuilder {
         exp is FunctionExpressionInvocation ||
         exp is MethodInvocation) return exp;
     return parenthesizedExpression(exp);
+  }
+
+  static PropertyAccess propertyAccess(
+      Expression target, SimpleIdentifier name) {
+    var p = new Token(TokenType.PERIOD, 0);
+    return new PropertyAccess(target, p, name);
+  }
+
+  static MethodInvocation methodInvoke(
+      Expression target, SimpleIdentifier name, NodeList<Expression> args) {
+    var p = new Token(TokenType.PERIOD, 0);
+    return new MethodInvocation(target, p, name, null, argumentList(args));
   }
 
   static TokenType getTokenType(String lexeme) {
@@ -213,6 +228,10 @@ class AstBuilder {
         return TokenType.BACKSLASH;
       case "...":
         return TokenType.PERIOD_PERIOD_PERIOD;
+      case "??":
+        return TokenType.QUESTION_QUESTION;
+      case "??=":
+        return TokenType.QUESTION_QUESTION_EQ;
       default:
         return null;
     }
@@ -248,8 +267,11 @@ class AstBuilder {
     return RawAstBuilder.block(statements);
   }
 
-  static MethodDeclaration blockMethodDeclaration(TypeName rt, Identifier m,
-      List<FormalParameter> params, List<Statement> statements,
+  static MethodDeclaration blockMethodDeclaration(
+      TypeName rt,
+      SimpleIdentifier m,
+      List<FormalParameter> params,
+      List<Statement> statements,
       {bool isStatic: false}) {
     FormalParameterList fl = formalParameterList(params);
     Block b = block(statements);
@@ -257,8 +279,11 @@ class AstBuilder {
     return RawAstBuilder.methodDeclaration(rt, m, fl, body, isStatic: isStatic);
   }
 
-  static FunctionDeclaration blockFunctionDeclaration(TypeName rt, Identifier f,
-      List<FormalParameter> params, List<Statement> statements) {
+  static FunctionDeclaration blockFunctionDeclaration(
+      TypeName rt,
+      SimpleIdentifier f,
+      List<FormalParameter> params,
+      List<Statement> statements) {
     FunctionExpression fexp = blockFunction(params, statements);
     return RawAstBuilder.functionDeclaration(rt, f, fexp);
   }
@@ -272,14 +297,15 @@ class AstBuilder {
   }
 
   static FunctionExpression expressionFunction(
-      List<FormalParameter> params, Expression body, [bool decl = false]) {
+      List<FormalParameter> params, Expression body,
+      [bool decl = false]) {
     FormalParameterList fl = formalParameterList(params);
     ExpressionFunctionBody b = RawAstBuilder.expressionFunctionBody(body, decl);
     return RawAstBuilder.functionExpression(fl, b);
   }
 
   static FunctionDeclarationStatement functionDeclarationStatement(
-      TypeName rType, Identifier name, FunctionExpression fe) {
+      TypeName rType, SimpleIdentifier name, FunctionExpression fe) {
     var fd = RawAstBuilder.functionDeclaration(rType, name, fe);
     return RawAstBuilder.functionDeclarationStatement(fd);
   }
@@ -295,12 +321,12 @@ class AstBuilder {
     return application(parenthesize(l), <Expression>[e1]);
   }
 
-  static SimpleFormalParameter simpleFormal(Identifier v, TypeName t) {
+  static SimpleFormalParameter simpleFormal(SimpleIdentifier v, TypeName t) {
     return RawAstBuilder.simpleFormalParameter(v, t);
   }
 
   static FunctionTypedFormalParameter functionTypedFormal(
-      TypeName ret, Identifier v, List<FormalParameter> params) {
+      TypeName ret, SimpleIdentifier v, List<FormalParameter> params) {
     FormalParameterList ps = formalParameterList(params);
     return RawAstBuilder.functionTypedFormalParameter(ret, v, ps);
   }
@@ -324,22 +350,53 @@ class AstBuilder {
   static NamedExpression namedExpression(String s, Expression e) {
     return RawAstBuilder.namedExpression(identifierFromString(s), e);
   }
+
+  /// Declares a single variable `var <name> = <init>` with the type and name
+  /// specified by the VariableElement. See also [variableStatement].
+  static VariableDeclarationList declareVariable(SimpleIdentifier name,
+      [Expression init]) {
+    var eqToken = init != null ? new Token(TokenType.EQ, 0) : null;
+    var varToken = new KeywordToken(Keyword.VAR, 0);
+    return new VariableDeclarationList(null, null, varToken, null,
+        [new VariableDeclaration(name, eqToken, init)]);
+  }
+
+  static VariableDeclarationStatement variableStatement(SimpleIdentifier name,
+      [Expression init]) {
+    return RawAstBuilder
+        .variableDeclarationStatement(declareVariable(name, init));
+  }
+
+  static InstanceCreationExpression instanceCreation(
+      ConstructorName ctor, List<Expression> args) {
+    var newToken = new KeywordToken(Keyword.NEW, 0);
+    return new InstanceCreationExpression(
+        newToken, ctor, RawAstBuilder.argumentList(args));
+  }
 }
 
 // This class provides a low-level wrapper around the constructors for
 // the AST.  It mostly simply abstracts from the lexical tokens.
 class RawAstBuilder {
+  static ConstructorName constructorName(TypeName type,
+      [SimpleIdentifier name]) {
+    Token period = name != null ? new Token(TokenType.PERIOD, 0) : null;
+    return new ConstructorName(type, period, name);
+  }
+
   static SimpleIdentifier identifierFromString(String name) {
     StringToken token = new SyntheticStringToken(TokenType.IDENTIFIER, name, 0);
     return new SimpleIdentifier(token);
   }
 
-  static PrefixedIdentifier prefixedIdentifier(Identifier pre, Identifier id) {
+  static PrefixedIdentifier prefixedIdentifier(
+      SimpleIdentifier pre, SimpleIdentifier id) {
     Token period = new Token(TokenType.PERIOD, 0);
     return new PrefixedIdentifier(pre, period, id);
   }
 
-  static TypeParameter typeParameter(Identifier name, [TypeName bound = null]) {
+  static TypeParameter typeParameter(SimpleIdentifier name,
+      [TypeName bound = null]) {
     Token keyword =
         (bound == null) ? null : new KeywordToken(Keyword.EXTENDS, 0);
     return new TypeParameter(null, null, name, keyword, bound);
@@ -367,8 +424,8 @@ class RawAstBuilder {
     return new TypeName(id, l);
   }
 
-  static FunctionTypeAlias functionTypeAlias(TypeName ret, Identifier name,
-      TypeParameterList tps, FormalParameterList fps) {
+  static FunctionTypeAlias functionTypeAlias(TypeName ret,
+      SimpleIdentifier name, TypeParameterList tps, FormalParameterList fps) {
     Token semi = new Token(TokenType.SEMICOLON, 0);
     Token td = new KeywordToken(Keyword.TYPEDEF, 0);
     return new FunctionTypeAlias(null, null, td, ret, name, tps, fps, semi);
@@ -429,7 +486,7 @@ class RawAstBuilder {
 
   static Expression functionExpressionInvocation(
       Expression function, ArgumentList es) {
-    return new FunctionExpressionInvocation(function, es);
+    return new FunctionExpressionInvocation(function, null, es);
   }
 
   static FormalParameterList formalParameterList(List<FormalParameter> params) {
@@ -468,21 +525,21 @@ class RawAstBuilder {
   }
 
   static FunctionDeclaration functionDeclaration(
-      TypeName rt, Identifier f, FunctionExpression fexp) {
+      TypeName rt, SimpleIdentifier f, FunctionExpression fexp) {
     return new FunctionDeclaration(null, null, null, rt, null, f, fexp);
   }
 
-  static MethodDeclaration methodDeclaration(
-      TypeName rt, Identifier m, FormalParameterList fl, FunctionBody body,
+  static MethodDeclaration methodDeclaration(TypeName rt, SimpleIdentifier m,
+      FormalParameterList fl, FunctionBody body,
       {bool isStatic: false}) {
     Token st = isStatic ? new KeywordToken(Keyword.STATIC, 0) : null;
     return new MethodDeclaration(
-        null, null, null, st, rt, null, null, m, fl, body);
+        null, null, null, st, rt, null, null, m, null, fl, body);
   }
 
   static FunctionExpression functionExpression(
       FormalParameterList fl, FunctionBody body) {
-    return new FunctionExpression(fl, body);
+    return new FunctionExpression(null, fl, body);
   }
 
   static FunctionDeclarationStatement functionDeclarationStatement(
@@ -496,13 +553,15 @@ class RawAstBuilder {
     return new ReturnStatement(ret, e, semi);
   }
 
-  static SimpleFormalParameter simpleFormalParameter(Identifier v, TypeName t) {
+  static SimpleFormalParameter simpleFormalParameter(
+      SimpleIdentifier v, TypeName t) {
     return new SimpleFormalParameter(null, <Annotation>[], null, t, v);
   }
 
   static FunctionTypedFormalParameter functionTypedFormalParameter(
-      TypeName ret, Identifier v, FormalParameterList ps) {
-    return new FunctionTypedFormalParameter(null, <Annotation>[], ret, v, ps);
+      TypeName ret, SimpleIdentifier v, FormalParameterList ps) {
+    return new FunctionTypedFormalParameter(
+        null, <Annotation>[], ret, v, null, ps);
   }
 
   static FormalParameter requiredFormalParameter(NormalFormalParameter fp) {
@@ -517,12 +576,18 @@ class RawAstBuilder {
     return new DefaultFormalParameter(fp, ParameterKind.NAMED, null, null);
   }
 
-  static NamedExpression namedParameter(Identifier s, Expression e) {
+  static NamedExpression namedParameter(SimpleIdentifier s, Expression e) {
     return namedExpression(s, e);
   }
 
-  static NamedExpression namedExpression(Identifier s, Expression e) {
+  static NamedExpression namedExpression(SimpleIdentifier s, Expression e) {
     Label l = new Label(s, new Token(TokenType.COLON, 0));
     return new NamedExpression(l, e);
+  }
+
+  static VariableDeclarationStatement variableDeclarationStatement(
+      VariableDeclarationList varDecl) {
+    var semi = new Token(TokenType.SEMICOLON, 0);
+    return new VariableDeclarationStatement(varDecl, semi);
   }
 }

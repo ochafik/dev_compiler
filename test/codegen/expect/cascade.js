@@ -1,8 +1,10 @@
-dart.library('cascade', null, /* Imports */[
+dart_library.library('cascade', null, /* Imports */[
+  'dart/_runtime',
   'dart/core'
 ], /* Lazy imports */[
-], function(exports, core) {
+], function(exports, dart, core) {
   'use strict';
+  let dartx = dart.dartx;
   class A extends core.Object {
     A() {
       this.x = null;
@@ -50,7 +52,7 @@ dart.library('cascade', null, /* Imports */[
   dart.fn(test_mutate_outside_cascade, dart.void, []);
   function test_VariableDeclaration_single() {
     let a = [];
-    a.length = 2;
+    a[dartx.length] = 2;
     a[dartx.add](42);
     core.print(a);
   }
@@ -58,7 +60,7 @@ dart.library('cascade', null, /* Imports */[
   function test_VariableDeclaration_last() {
     let a = 42, b = (() => {
       let _ = [];
-      _.length = 2;
+      _[dartx.length] = 2;
       _[dartx.add](a);
       return _;
     })();
@@ -68,7 +70,7 @@ dart.library('cascade', null, /* Imports */[
   function test_VariableDeclaration_first() {
     let a = (() => {
       let _ = [];
-      _.length = 2;
+      _[dartx.length] = 2;
       _[dartx.add](3);
       return _;
     })(), b = 2;
@@ -84,7 +86,7 @@ dart.library('cascade', null, /* Imports */[
     })());
   }
   dart.fn(test_increment, dart.void, []);
-  let Base$ = dart.generic(function(T) {
+  const Base$ = dart.generic(function(T) {
     class Base extends core.Object {
       Base() {
         this.x = dart.list([], T);
@@ -105,7 +107,7 @@ dart.library('cascade', null, /* Imports */[
     }
   }
   dart.setSignature(Foo, {
-    methods: () => ({test_final_field_generic: [dart.void, [core.Object]]})
+    methods: () => ({test_final_field_generic: [dart.void, [dart.dynamic]]})
   });
   // Exports:
   exports.A = A;

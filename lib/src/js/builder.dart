@@ -298,19 +298,36 @@ class JsBuilder {
   LiteralString escapedString(String value, [String quote = '"']) {
    // Start by escaping the backslashes.
     String escaped = value.replaceAll('\\', '\\\\');
-    // Do not escape unicode characters and ' because they are allowed in the
-    // string literal anyway.
-    escaped = escaped.replaceAllMapped(new RegExp('\n|$quote|\b|\t|\v'), (m) {
+
+
+    // Replace $ in template strings:
+    // http://www.ecma-international.org/ecma-262/6.0/#sec-template-literal-lexical-components
+    var quoteReplace = quote == '`' ? r'`$' : quote;
+
+    // http://www.ecma-international.org/ecma-262/6.0/#sec-literals-string-literals
+    // > All code points may appear literally in a string literal except for the
+    // > closing quote code points, U+005C (REVERSE SOLIDUS),
+    // > U+000D (CARRIAGE RETURN), U+2028 (LINE SEPARATOR),
+    // > U+2029 (PARAGRAPH SEPARATOR), and U+000A (LINE FEED).
+    var re = new RegExp('[\n\r$quoteReplace\b\f\t\v\u2028\u2029]');
+    escaped = escaped.replaceAllMapped(re, (m) {
       switch (m.group(0)) {
         case "\n" : return r"\n";
-        // Quotes are only replaced if they conflict with the containing quote
-        case '"':   return r'\"';
-        case "'":   return r"\'";
-        case "`":   return r"\`";
-        case "\b" : return r"\b";
-        case "\t" : return r"\t";
-        case "\f" : return r"\f";
-        case "\v" : return r"\v";
+        case "\r" : return r"\r";
+        case "\u2028": return r"\u2028";
+        case "\u2029": return r"\u2029";
+        // Quotes and $ are only replaced if they conflict with the containing
+        // quote, see regex above.
+        case '"': return r'\"';
+        case "'": return r"\'";
+        case "`": return r"\`";
+        case r"$": return r"\$";
+        // TODO(jmesserly): these don't need to be escaped for correctness,
+        // but they are conventionally escaped.
+        case "\b": return r"\b";
+        case "\t": return r"\t";
+        case "\f": return r"\f";
+        case "\v": return r"\v";
       }
     });
     LiteralString result = new LiteralString('$quote$escaped$quote');
@@ -450,12 +467,16 @@ class MiniJsParser {
   static const COLON = 14;
   static const SEMICOLON = 15;
   static const ARROW = 16;
-  static const HASH = 17;
-  static const WHITESPACE = 18;
-  static const OTHER = 19;
+  static const ELLIPSIS = 17;
+  static const HASH = 18;
+  static const WHITESPACE = 19;
+  static const OTHER = 20;
 
   // Make sure that ]] is two symbols.
-  bool singleCharCategory(int category) => category >= DOT;
+  // TODO(jmesserly): => and ... are not single char tokens, should we change
+  // their numbers? It shouldn't matter because this is only called on values
+  // from the [CATEGORIES] table.
+  bool singleCharCategory(int category) => category > DOT;
 
   static String categoryToString(int cat) {
     switch (cat) {
@@ -477,6 +498,7 @@ class MiniJsParser {
       case COLON: return "COLON";
       case SEMICOLON: return "SEMICOLON";
       case ARROW: return "ARROW";
+      case ELLIPSIS: return "ELLIPSIS";
       case HASH: return "HASH";
       case WHITESPACE: return "WHITESPACE";
       case OTHER: return "OTHER";
@@ -528,6 +550,7 @@ class MiniJsParser {
         .toSet();
 
   static final ARROW_TOKEN = '=>';
+  static final ELLIPSIS_TOKEN = '...';
 
   static final OPERATORS_THAT_LOOK_LIKE_IDENTIFIERS =
       ['typeof', 'void', 'delete', 'in', 'instanceof', 'await'].toSet();
@@ -642,6 +665,12 @@ class MiniJsParser {
         double.parse(lastToken, (_) {
           error("Unparseable number");
         });
+      } else if (cat == DOT && lastToken.length > 1) {
+        if (lastToken == ELLIPSIS_TOKEN) {
+          lastCategory = ELLIPSIS;
+        } else {
+          error("Unknown operator");
+        }
       } else if (cat == SYMBOL) {
         if (lastToken == ARROW_TOKEN) {
           lastCategory = ARROW;
@@ -782,6 +811,22 @@ class MiniJsParser {
     return expression;
   }
 
+  InterpolatedIdentifier parseInterpolatedIdentifier() {
+    var id = new InterpolatedIdentifier(parseHash());
+    interpolatedValues.add(id);
+    return id;
+  }
+
+  Identifier parseIdentifier() {
+    if (acceptCategory(HASH)) {
+      return parseInterpolatedIdentifier();
+    } else {
+      var id = new Identifier(lastToken);
+      expectCategory(ALPHA);
+      return id;
+    }
+  }
+
   /**
    * CoverParenthesizedExpressionAndArrowParameterList[Yield] :
    *     ( Expression )
@@ -792,26 +837,42 @@ class MiniJsParser {
   Expression parseExpressionOrArrowFunction() {
     if (acceptCategory(RPAREN)) {
       expectCategory(ARROW);
-      return parseArrowFunctionBody(<Identifier>[]);
+      return parseArrowFunctionBody(<Parameter>[]);
     }
-    Expression expression = parseExpression();
+    if (acceptCategory(ELLIPSIS)) {
+      var params = <Parameter>[new RestParameter(parseParameter())];
+      expectCategory(RPAREN);
+      expectCategory(ARROW);
+      return parseArrowFunctionBody(params);
+    }
+    Expression expression = parseAssignment();
+    while (acceptCategory(COMMA)) {
+      if (acceptCategory(ELLIPSIS)) {
+        var params = <Parameter>[];
+        _expressionToParameterList(expression, params);
+        params.add(new RestParameter(parseParameter()));
+        expectCategory(RPAREN);
+        expectCategory(ARROW);
+        return parseArrowFunctionBody(params);
+      }
+      Expression right = parseAssignment();
+      expression = new Binary(',', expression, right);
+    }
     expectCategory(RPAREN);
     if (acceptCategory(ARROW)) {
-      var params = <Identifier>[];
+      var params = <Parameter>[];
       _expressionToParameterList(expression, params);
       return parseArrowFunctionBody(params);
     }
     return expression;
-
   }
 
   /**
    * Converts a parenthesized expression into a list of parameters, issuing an
    * error if the conversion fails.
    */
-  void _expressionToParameterList(Expression node, List<Identifier> params) {
+  void _expressionToParameterList(Expression node, List<Parameter> params) {
     if (node is Identifier) {
-      // TODO(jmesserly): support default/rest parameters
       params.add(node);
     } else if (node is Binary && node.op == ',') {
       // TODO(jmesserly): this will allow illegal parens, such as
@@ -827,7 +888,7 @@ class MiniJsParser {
     }
   }
 
-  Expression parseArrowFunctionBody(List<Identifier> params) {
+  Expression parseArrowFunctionBody(List<Parameter> params) {
     Node body;
     if (acceptCategory(LBRACE)) {
       body = parseBlock();
@@ -848,25 +909,22 @@ class MiniJsParser {
   }
 
   Expression parseFun() {
-    List<Identifier> params = <Identifier>[];
+    List<Parameter> params = <Parameter>[];
 
     expectCategory(LPAREN);
     if (!acceptCategory(RPAREN)) {
       for (;;) {
-        if (acceptCategory(HASH)) {
-          var nameOrPosition = parseHash();
-          InterpolatedParameter parameter =
-              new InterpolatedParameter(nameOrPosition);
-          interpolatedValues.add(parameter);
-          params.add(parameter);
-        } else {
-          String argumentName = lastToken;
-          expectCategory(ALPHA);
-          params.add(new Identifier(argumentName));
+        if (acceptCategory(ELLIPSIS)) {
+          params.add(new RestParameter(parseParameter()));
+          expectCategory(RPAREN);
+          break;
         }
-        if (acceptCategory(COMMA)) continue;
-        expectCategory(RPAREN);
-        break;
+
+        params.add(parseParameter());
+        if (!acceptCategory(COMMA)) {
+          expectCategory(RPAREN);
+          break;
+        }
       }
     }
     AsyncModifier asyncModifier;
@@ -885,6 +943,21 @@ class MiniJsParser {
     expectCategory(LBRACE);
     Block block = parseBlock();
     return new Fun(params, block, asyncModifier: asyncModifier);
+  }
+
+  /** Parse parameter name or interpolated parameter. */
+  Identifier parseParameter() {
+    if (acceptCategory(HASH)) {
+      var nameOrPosition = parseHash();
+      var parameter = new InterpolatedParameter(nameOrPosition);
+      interpolatedValues.add(parameter);
+      return parameter;
+    } else {
+      // TODO(jmesserly): validate this is not a keyword
+      String argumentName = lastToken;
+      expectCategory(ALPHA);
+      return new Identifier(argumentName);
+    }
   }
 
   Expression parseObjectInitializer() {
@@ -928,8 +1001,12 @@ class MiniJsParser {
         final arguments = <Expression>[];
         if (!acceptCategory(RPAREN)) {
           while (true) {
-            Expression argument = parseAssignment();
-            arguments.add(argument);
+            if (acceptCategory(ELLIPSIS)) {
+              arguments.add(new Spread(parseAssignment()));
+              expectCategory(RPAREN);
+              break;
+            }
+            arguments.add(parseAssignment());
             if (acceptCategory(RPAREN)) break;
             expectCategory(COMMA);
           }
@@ -1075,47 +1152,100 @@ class MiniJsParser {
   }
 
   /** Parse a variable declaration list, with `var` or `let` [keyword] */
-  VariableDeclarationList parseVariableDeclarationList(String keyword) {
-    // Supports one form for interpolated variable declaration:
-    //    let # = ...
-    if (acceptCategory(HASH)) {
-      var name = new InterpolatedIdentifier(parseHash());
-      interpolatedValues.add(name);
-
-      Expression initializer = acceptString("=") ? parseAssignment() : null;
-      return new VariableDeclarationList(keyword,
-          [new VariableInitialization(name, initializer)]);
-    }
-
-    String firstVariable = lastToken;
-    expectCategory(ALPHA);
-    return finishVariableDeclarationList(keyword, firstVariable);
-  }
-
-  VariableDeclarationList finishVariableDeclarationList(
-      String keyword, String firstVariable) {
+  VariableDeclarationList parseVariableDeclarationList(
+      String keyword, [String firstIdentifier])  {
     var initialization = [];
 
-    void declare(String variable) {
-      Expression initializer = null;
-      if (acceptString("=")) {
-        initializer = parseAssignment();
+    do {
+      var declarator;
+      if (firstIdentifier != null) {
+        declarator = new Identifier(firstIdentifier);
+        firstIdentifier = null;
+      } else {
+        declarator = parseVariableBinding();
       }
-      var declaration = new Identifier(variable);
-      initialization.add(new VariableInitialization(declaration, initializer));
-    }
 
-    declare(firstVariable);
-    while (acceptCategory(COMMA)) {
-      String variable = lastToken;
-      expectCategory(ALPHA);
-      declare(variable);
-    }
+      var initializer = acceptString("=") ? parseAssignment() : null;
+      initialization.add(new VariableInitialization(declarator, initializer));
+    } while (acceptCategory(COMMA));
+
     return new VariableDeclarationList(keyword, initialization);
   }
 
+  VariableBinding parseVariableBinding() {
+    switch (lastCategory) {
+      case ALPHA:
+      case HASH:
+        return parseIdentifier();
+      case LBRACE:
+      case LSQUARE:
+        return parseBindingPattern();
+      default:
+        error('Unexpected token $lastToken: ${categoryToString(lastCategory)}');
+        return null;
+    }
+  }
+
+  /// Note: this doesn't deal with general-case destructuring yet, it just
+  /// supports it in variable initialization.
+  /// See ES6 spec:
+  /// http://www.ecma-international.org/ecma-262/6.0/#sec-destructuring-binding-patterns
+  /// http://www.ecma-international.org/ecma-262/6.0/#sec-destructuring-assignment
+  /// TODO(ochafik): Support destructuring in LeftHandSideExpression.
+  BindingPattern parseBindingPattern() {
+    if (acceptCategory(LBRACE)) {
+      return parseObjectBindingPattern();
+    } else {
+      expectCategory(LSQUARE);
+      return parseArrayBindingPattern();
+    }
+  }
+
+  ArrayBindingPattern parseArrayBindingPattern() {
+    var variables = <DestructuredVariable>[];
+    do {
+      var name;
+      var structure;
+      var defaultValue;
+
+      var declarator = parseVariableBinding();
+      if (declarator is Identifier) name = declarator;
+      else if (declarator is BindingPattern) structure = declarator;
+      else error("Unexpected LHS: $declarator");
+
+      if (acceptString("=")) {
+        defaultValue = parseExpression();
+      }
+      variables.add(new DestructuredVariable(
+          name: name, structure: structure, defaultValue: defaultValue));
+    } while (acceptCategory(COMMA));
+
+    expectCategory(RSQUARE);
+    return new ArrayBindingPattern(variables);
+  }
+
+  ObjectBindingPattern parseObjectBindingPattern() {
+    var variables = <DestructuredVariable>[];
+    do {
+      var name = parseIdentifier();
+      var structure;
+      var defaultValue;
+
+      if (acceptCategory(COLON)) {
+        structure = parseBindingPattern();
+      } else if (acceptString("=")) {
+        defaultValue = parseExpression();
+      }
+      variables.add(new DestructuredVariable(
+          name: name, structure: structure, defaultValue: defaultValue));
+    } while (acceptCategory(COMMA));
+
+    expectCategory(RBRACE);
+    return new ObjectBindingPattern(variables);
+  }
+
   Expression parseVarDeclarationOrExpression() {
-    var keyword = acceptVarOrLet();
+    var keyword = acceptVarLetOrConst();
     if (keyword != null) {
       return parseVariableDeclarationList(keyword);
     } else {
@@ -1124,9 +1254,10 @@ class MiniJsParser {
   }
 
   /** Accepts a `var` or `let` keyword. If neither is found, returns null. */
-  String acceptVarOrLet() {
+  String acceptVarLetOrConst() {
     if (acceptString('var')) return 'var';
     if (acceptString('let')) return 'let';
+    if (acceptString('const')) return 'const';
     return null;
   }
 
@@ -1185,7 +1316,7 @@ class MiniJsParser {
 
       if (acceptString('try')) return parseTry();
 
-      var keyword = acceptVarOrLet();
+      var keyword = acceptVarLetOrConst();
       if (keyword != null) {
         Expression declarations = parseVariableDeclarationList(keyword);
         expectSemicolon();
@@ -1311,7 +1442,7 @@ class MiniJsParser {
       return finishFor(null);
     }
 
-    var keyword = acceptVarOrLet();
+    var keyword = acceptVarLetOrConst();
     if (keyword != null) {
       String identifier = lastToken;
       expectCategory(ALPHA);
@@ -1333,7 +1464,7 @@ class MiniJsParser {
             iterableExpression,
             body);
       }
-      var declarations = finishVariableDeclarationList(keyword, identifier);
+      var declarations = parseVariableDeclarationList(keyword, identifier);
       expectCategory(SEMICOLON);
       return finishFor(declarations);
     }
@@ -1437,18 +1568,10 @@ class MiniJsParser {
   }
 
   ClassExpression parseClass() {
-    Identifier name;
-    if (acceptCategory(HASH)) {
-      var interpolatedName = new InterpolatedIdentifier(parseHash());
-      interpolatedValues.add(interpolatedName);
-      name = interpolatedName;
-    } else {
-      name = new Identifier(lastToken);
-      expectCategory(ALPHA);
-    }
+    Identifier name = parseIdentifier();
     Expression heritage = null;
     if (acceptString('extends')) {
-      heritage = parseLeftHandSide();
+      heritage = parseConditional();
     }
     expectCategory(LBRACE);
     var methods = new List<Method>();
@@ -1473,10 +1596,18 @@ class MiniJsParser {
   Property parseMethodOrProperty({bool onlyMethods: false}) {
     bool isStatic = acceptString('static');
 
-    bool isGetter = false;
-    bool isSetter = false;
+    bool isGetter = lastToken == 'get';
+    bool isSetter = lastToken == 'set';
     Expression name = null;
-    bool propertyNameIsIdentifier = lastCategory == ALPHA;
+    if (isGetter || isSetter) {
+      var token = lastToken;
+      getToken();
+      if (lastCategory == COLON) {
+        // That wasn't a accessor but the 'get' or 'set' property: retropedal.
+        isGetter = isSetter = false;
+        name = new LiteralString('"$token"');
+      }
+    }
     if (acceptCategory(HASH)) {
       if (lastCategory != LPAREN && (onlyMethods || lastCategory != COLON)) {
         // Interpolated method
@@ -1486,18 +1617,7 @@ class MiniJsParser {
       }
       name = parseInterpolatedExpression();
     } else {
-      name = parsePropertyName();
-    }
-
-    // Allow get or set to be followed by another property name.
-    if (propertyNameIsIdentifier &&
-        (lastCategory == ALPHA || lastCategory == HASH)) {
-      LiteralString p = name;
-      isGetter = p.value == '"get"';
-      isSetter = p.value == '"set"';
-      if (isGetter || isSetter) {
-        name = parsePropertyName();
-      }
+      name ??= parsePropertyName();
     }
 
     if (!onlyMethods && acceptCategory(COLON)) {

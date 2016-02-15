@@ -5,7 +5,7 @@
 
 /// Command line tool to write checker errors as inline comments in the source
 /// code of the program. This tool requires the info.json file created by
-/// running devc.dart passing the arguments
+/// running dartdevc.dart passing the arguments
 /// --dump-info --dump-info-file info.json
 
 library dev_compiler.bin.edit_files;
@@ -44,8 +44,10 @@ final ArgParser argParser = new ArgParser()
   ..addFlag('use-multi-package',
       help: 'Whether to use the multi-package resolver for "package:" imports',
       defaultsTo: false)
-  ..addOption('package-paths', help: 'if using the multi-package resolver, '
-      'the list of directories where to look for packages.', defaultsTo: '')
+  ..addOption('package-paths',
+      help: 'if using the multi-package resolver, '
+          'the list of directories where to look for packages.',
+      defaultsTo: '')
   ..addFlag('help', abbr: 'h', help: 'Display this message');
 
 void _showUsageAndExit() {
@@ -71,9 +73,10 @@ class EditFileSummaryVisitor extends RecursiveSummaryVisitor {
       this.checkoutFilesArg, this.includePattern, this.excludePattern);
 
   TextEditTransaction getEdits(String name) => _files.putIfAbsent(name, () {
-    var fileContents = new File(name).readAsStringSync();
-    return new TextEditTransaction(fileContents, new SourceFile(fileContents));
-  });
+        var fileContents = new File(name).readAsStringSync();
+        return new TextEditTransaction(
+            fileContents, new SourceFile(fileContents));
+      });
 
   /// Find the corresponding [Source] for [uri].
   Source findSource(Uri uri) {
@@ -135,7 +138,7 @@ void main(List<String> argv) {
   }
 
   var filename = args.rest.first;
-  var options = new CompilerOptions(
+  var options = new SourceResolverOptions(
       dartSdkPath: sdkDir.path,
       useMultiPackage: args['use-multi-package'],
       packageRoot: args['package-root'],
@@ -150,10 +153,14 @@ void main(List<String> argv) {
       ? new RegExp(args['include-pattern'])
       : null;
 
-  var context = createAnalysisContext(options);
-  var visitor = new EditFileSummaryVisitor(context, args['level'],
-      args['checkout-files-executable'], args['checkout-files-arg'],
-      includePattern, excludePattern);
+  var context = createAnalysisContextWithSources(options);
+  var visitor = new EditFileSummaryVisitor(
+      context,
+      args['level'],
+      args['checkout-files-executable'],
+      args['checkout-files-arg'],
+      includePattern,
+      excludePattern);
   summary.accept(visitor);
   visitor.build();
 }

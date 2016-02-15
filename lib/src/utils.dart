@@ -3,7 +3,6 @@
 // BSD-style license that can be found in the LICENSE file.
 
 /// Holds a couple utility functions used at various places in the system.
-library dev_compiler.src.utils;
 
 import 'dart:io';
 
@@ -20,16 +19,16 @@ import 'package:analyzer/src/generated/ast.dart'
         Expression,
         SimpleIdentifier,
         MethodInvocation;
-import 'package:analyzer/src/generated/constant.dart' show DartObjectImpl;
+import 'package:analyzer/src/generated/constant.dart' show DartObject;
 import 'package:analyzer/src/generated/element.dart';
-import 'package:analyzer/src/generated/engine.dart'
-    show ParseDartTask, AnalysisContext;
+import 'package:analyzer/src/generated/engine.dart' show AnalysisContext;
+import 'package:analyzer/src/generated/error.dart' show ErrorCode;
+import 'package:analyzer/src/task/dart.dart' show ParseDartTask;
 import 'package:analyzer/src/generated/resolver.dart' show TypeProvider;
-import 'package:analyzer/src/generated/source.dart' show Source;
+import 'package:analyzer/src/generated/source.dart' show LineInfo, Source;
 import 'package:analyzer/analyzer.dart' show parseDirectives;
 import 'package:crypto/crypto.dart' show CryptoUtils, MD5;
 import 'package:source_span/source_span.dart';
-import 'package:yaml/yaml.dart';
 
 import 'codegen/js_names.dart' show invalidVariableName;
 
@@ -79,7 +78,7 @@ String _toIdentifier(String name) {
 final _invalidCharInIdentifier = new RegExp(r'[^A-Za-z_$0-9]');
 
 /// Returns all libraries transitively imported or exported from [start].
-Iterable<LibraryElement> reachableLibraries(LibraryElement start) {
+List<LibraryElement> reachableLibraries(LibraryElement start) {
   var results = <LibraryElement>[];
   var seen = new Set();
   void find(LibraryElement lib) {
@@ -292,12 +291,10 @@ class OutWriter {
   }
 }
 
-SourceLocation locationForOffset(CompilationUnit unit, Uri uri, int offset) {
-  var lineInfo = unit.lineInfo.getLocation(offset);
+SourceLocation locationForOffset(LineInfo lineInfo, Uri uri, int offset) {
+  var loc = lineInfo.getLocation(offset);
   return new SourceLocation(offset,
-      sourceUrl: uri,
-      line: lineInfo.lineNumber - 1,
-      column: lineInfo.columnNumber - 1);
+      sourceUrl: uri, line: loc.lineNumber - 1, column: loc.columnNumber - 1);
 }
 
 /// Computes a hash for the given contents.
@@ -312,36 +309,24 @@ String computeHashFromFile(String filepath) {
   return CryptoUtils.bytesToHex((new MD5()..add(bytes)).close());
 }
 
-String resourceOutputPath(Uri resourceUri, Uri entryUri) {
+String resourceOutputPath(Uri resourceUri, Uri entryUri, String runtimeDir) {
   if (resourceUri.scheme == 'package') return resourceUri.path;
 
   if (resourceUri.scheme != 'file') return null;
-  var filepath = resourceUri.path;
-  var relativePath = path.relative(filepath, from: path.dirname(entryUri.path));
 
-  // File:/// urls can be for resources in the same project or resources from
-  // the dev_compiler package. For now we only support relative paths going
-  // further inside the folder where the entrypoint is located, otherwise we
-  // assume this is a runtime resource from the dev_compiler.
-  if (!relativePath.startsWith('..')) return relativePath;
+  var entryPath = entryUri.path;
+  // The entry uri is either a directory or a dart/html file.  If the latter,
+  // trim the file.
+  var entryDir = entryPath.endsWith('.dart') || entryPath.endsWith('.html')
+      ? path.dirname(entryPath)
+      : entryPath;
+  var filepath = path.normalize(path.join(entryDir, resourceUri.path));
+  if (path.isWithin(runtimeDir, filepath)) {
+    filepath = path.relative(filepath, from: runtimeDir);
+    return path.join('dev_compiler', 'runtime', filepath);
+  }
 
-  // Since this is a URI path we can assume forward slash and use lastIndexOf.
-  var runtimePath = '/lib/runtime/';
-  var pos = filepath.lastIndexOf(runtimePath);
-  if (pos == -1) return null;
-
-  var filename = filepath.substring(pos + runtimePath.length);
-  var dir = filepath.substring(0, pos);
-
-  // TODO(jmesserly): can we implement this without repeatedly reading pubspec?
-  // It seems like we should know our package's root directory without needing
-  // to search like this.
-  var pubspec =
-      loadYaml(new File(path.join(dir, 'pubspec.yaml')).readAsStringSync());
-
-  // Ensure this is loaded from the dev_compiler package.
-  if (pubspec['name'] != 'dev_compiler') return null;
-  return path.join('dev_compiler', 'runtime', filename);
+  return path.relative(resourceUri.path, from: entryDir);
 }
 
 /// Given an annotated [node] and a [test] function, returns the first matching
@@ -349,7 +334,7 @@ String resourceOutputPath(Uri resourceUri, Uri entryUri) {
 ///
 /// For example if we had the ClassDeclaration node for `FontElement`:
 ///
-///    @JsName('HTMLFontElement')
+///    @js.JS('HTMLFontElement')
 ///    @deprecated
 ///    class FontElement { ... }
 ///
@@ -357,13 +342,9 @@ String resourceOutputPath(Uri resourceUri, Uri entryUri) {
 ///
 ///    (v) => v.type.name == 'Deprecated' && v.type.element.library.isDartCore
 ///
-DartObjectImpl findAnnotation(
-    Element element, bool test(DartObjectImpl value)) {
+DartObject findAnnotation(Element element, bool test(DartObject value)) {
   for (var metadata in element.metadata) {
-    var evalResult = metadata.evaluationResult;
-    if (evalResult == null) continue;
-
-    var value = evalResult.value;
+    var value = metadata.constantValue;
     if (value != null && test(value)) return value;
   }
   return null;
@@ -373,11 +354,10 @@ DartObjectImpl findAnnotation(
 /// value of that field.
 ///
 /// If the field is missing or is not [expectedType], returns null.
-Object getConstantField(
-    DartObjectImpl value, String fieldName, DartType expectedType) {
-  if (value == null) return null;
-  var f = value.fields[fieldName];
-  return (f == null || f.type != expectedType) ? null : f.value;
+DartObject getConstantField(
+    DartObject value, String fieldName, DartType expectedType) {
+  var f = value?.getField(fieldName);
+  return (f == null || f.type != expectedType) ? null : f;
 }
 
 DartType fillDynamicTypeArgs(DartType t, TypeProvider types) {
@@ -399,30 +379,6 @@ bool inInvocationContext(SimpleIdentifier node) {
 // TODO(vsm): Move this onto the appropriate class.  Ideally, we'd attach
 // it to TypeProvider.
 
-final _objectMap = new Expando('providerToObjectMap');
-Map<String, DartType> getObjectMemberMap(TypeProvider typeProvider) {
-  Map<String, DartType> map = _objectMap[typeProvider];
-  if (map == null) {
-    map = <String, DartType>{};
-    _objectMap[typeProvider] = map;
-    var objectType = typeProvider.objectType;
-    var element = objectType.element;
-    // Only record methods (including getters) with no parameters.  As parameters are contravariant wrt
-    // type, using Object's version may be too strict.
-    // Add instance methods.
-    element.methods.where((method) => !method.isStatic).forEach((method) {
-      map[method.name] = method.type;
-    });
-    // Add getters.
-    element.accessors
-        .where((member) => !member.isStatic && member.isGetter)
-        .forEach((member) {
-      map[member.name] = member.type.returnType;
-    });
-  }
-  return map;
-}
-
 /// Searches all supertype, in order of most derived members, to see if any
 /// [match] a condition. If so, returns the first match, otherwise returns null.
 InterfaceType findSupertype(InterfaceType type, bool match(InterfaceType t)) {
@@ -436,32 +392,107 @@ InterfaceType findSupertype(InterfaceType type, bool match(InterfaceType t)) {
   return findSupertype(s, match);
 }
 
-SourceSpanWithContext createSpan(
-    AnalysisContext context, CompilationUnit unit, int start, int end,
-    [Source source]) {
-  if (source == null) source = unit.element.source;
-  var content = context.getContents(source).data;
-  return createSpanHelper(unit, start, end, source, content);
-}
-
 SourceSpanWithContext createSpanHelper(
-    CompilationUnit unit, int start, int end, Source source, String content) {
-  var startLoc = locationForOffset(unit, source.uri, start);
-  var endLoc = locationForOffset(unit, source.uri, end);
+    LineInfo lineInfo, int start, int end, Source source, String content) {
+  var startLoc = locationForOffset(lineInfo, source.uri, start);
+  var endLoc = locationForOffset(lineInfo, source.uri, end);
 
   var lineStart = startLoc.offset - startLoc.column;
   // Find the end of the line. This is not exposed directly on LineInfo, but
   // we can find it pretty easily.
   // TODO(jmesserly): for now we do the simple linear scan. Ideally we can get
   // some help from the LineInfo API.
-  var lineInfo = unit.lineInfo;
   int lineEnd = endLoc.offset;
-  int unitEnd = unit.endToken.end;
   int lineNum = lineInfo.getLocation(lineEnd).lineNumber;
-  while (lineEnd < unitEnd &&
+  while (lineEnd < content.length &&
       lineInfo.getLocation(++lineEnd).lineNumber == lineNum);
 
   var text = content.substring(start, end);
   var lineText = content.substring(lineStart, lineEnd);
   return new SourceSpanWithContext(startLoc, endLoc, text, lineText);
+}
+
+String _strongModeErrorPrefix = 'STRONG_MODE';
+
+bool isStrongModeError(ErrorCode errorCode) {
+  return errorCode.name.startsWith(_strongModeErrorPrefix);
+}
+
+String errorCodeName(ErrorCode errorCode) {
+  if (isStrongModeError(errorCode)) {
+    return errorCode.name.substring(_strongModeErrorPrefix.length + 1);
+  } else {
+    // TODO(jmesserly): this is for backwards compat, but not sure it's very
+    // useful to log this.
+    return 'AnalyzerMessage';
+  }
+}
+
+bool isInlineJS(Element e) =>
+    e is FunctionElement &&
+    e.library.source.uri.toString() == 'dart:_foreign_helper' &&
+    e.name == 'JS';
+
+bool isDartMathMinMax(Element e) =>
+    e is FunctionElement &&
+    e.library.source.uri.toString() == 'dart:math' &&
+    (e.name == 'min' || e.name == 'max');
+
+/// Parses an enum value out of a string.
+// TODO(ochafik): generic signature.
+dynamic parseEnum(String s, List enumValues) =>
+    enumValues.firstWhere((v) => s == getEnumName(v),
+        orElse: () => throw new ArgumentError('Unknown enum value: $s '
+            '(expected one of ${enumValues.map(getEnumName)})'));
+
+/// Gets the "simple" name of an enum value.
+getEnumName(v) {
+  var parts = '$v'.split('.');
+  if (parts.length != 2 || !parts.every((p) => p.isNotEmpty)) {
+    throw new ArgumentError('Invalid enum value: $v');
+  }
+  return parts[1];
+}
+
+/// Simplistic directed graph.
+class DirectedGraph<V> {
+  final _adjacencyList = <V, Set<V>>{};
+
+  void addEdge(V from, V to) {
+    _adjacencyList.putIfAbsent(from, () => new Set<V>()).add(to);
+  }
+
+  /// Get all the vertices reachable from the provided [roots].
+  Set<V> getTransitiveClosure(Iterable<V> roots) {
+    final reached = new Set<V>();
+
+    visit(V e) {
+      if (reached.add(e)) {
+        var destinations = _adjacencyList[e];
+        if (destinations != null) destinations.forEach(visit);
+      }
+    }
+    roots.forEach(visit);
+
+    return reached;
+  }
+}
+
+class FileSystem {
+  const FileSystem();
+
+  void _ensureParentExists(String file) {
+    var dir = new Directory(path.dirname(file));
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+  }
+
+  void copySync(String source, String destination) {
+    _ensureParentExists(destination);
+    new File(source).copySync(destination);
+  }
+
+  void writeAsStringSync(String file, String contents) {
+    _ensureParentExists(file);
+    new File(file).writeAsStringSync(contents);
+  }
 }

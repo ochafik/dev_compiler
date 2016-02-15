@@ -1,10 +1,12 @@
-dart.library('covariance', null, /* Imports */[
+dart_library.library('covariance', null, /* Imports */[
+  'dart/_runtime',
   'dart/core'
 ], /* Lazy imports */[
-], function(exports, core) {
+], function(exports, dart, core) {
   'use strict';
-  let _t = Symbol('_t');
-  let Foo$ = dart.generic(function(T) {
+  let dartx = dart.dartx;
+  const _t = Symbol('_t');
+  const Foo$ = dart.generic(function(T) {
     class Foo extends core.Object {
       Foo() {
         this[_t] = null;
@@ -20,8 +22,8 @@ dart.library('covariance', null, /* Imports */[
     }
     dart.setSignature(Foo, {
       methods: () => ({
-        add: [core.Object, [T]],
-        forEach: [core.Object, [dart.functionType(dart.void, [T])]]
+        add: [dart.dynamic, [T]],
+        forEach: [dart.dynamic, [dart.functionType(dart.void, [T])]]
       })
     });
     return Foo;
@@ -37,7 +39,7 @@ dart.library('covariance', null, /* Imports */[
     }
   }
   dart.setSignature(Bar, {
-    methods: () => ({add: [core.Object, [core.int]]})
+    methods: () => ({add: [dart.dynamic, [core.int]]})
   });
   function main() {
     let foo = new Bar();

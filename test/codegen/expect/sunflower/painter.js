@@ -1,15 +1,17 @@
-dart.library('painter', null, /* Imports */[
+dart_library.library('sunflower/painter', null, /* Imports */[
+  'dart/_runtime',
   'dart/math',
-  'dom',
+  'sunflower/dom',
   'dart/core',
-  'circle'
+  'sunflower/circle'
 ], /* Lazy imports */[
-], function(exports, math, dom, core, circle) {
+], function(exports, dart, math, dom, core, circle) {
   'use strict';
-  let ORANGE = "orange";
-  let RED = "red";
-  let BLUE = "blue";
-  let TAU = dart.notNull(math.PI) * 2;
+  let dartx = dart.dartx;
+  const ORANGE = "orange";
+  const RED = "red";
+  const BLUE = "blue";
+  const TAU = dart.notNull(math.PI) * 2;
   function querySelector(selector) {
     return dom.document.querySelector(selector);
   }
@@ -17,7 +19,9 @@ dart.library('painter', null, /* Imports */[
   dart.defineLazyProperties(exports, {
     get canvas() {
       return dart.as(querySelector("#canvas"), dom.CanvasElement);
-    },
+    }
+  });
+  dart.defineLazyProperties(exports, {
     get context() {
       return dart.as(exports.canvas.getContext('2d'), dom.CanvasRenderingContext2D);
     }

@@ -1,9 +1,10 @@
-# Don’t commit the following directories created by pub.
+# Don’t commit the following files and directories created by pub.
 .pub
 build/
 packages
+.packages
 
-# Or the files created by tools.
+# Ignore files created by tools.
 *.dart.precompiled.js
 *.js_
 *.js.deps
@@ -11,12 +12,21 @@ packages
 .idea/
 .pub/
 node_modules
+doc/api/
+
+# Ignore test output
+test/codegen/expect/dev_compiler/
+test/codegen/expect/language/
+test/codegen/expect/lib/
+test/codegen/expect/sunflower/dev_compiler/
+test/codegen/expect/matcher/
+test/codegen/language/*_multi.dart
 
 # Created by ./tool/build_sdk.sh
 tool/generated_sdk/
 
-# Or our test outputs
-test/codegen/actual/
+# Created by ./tool/dependency_overrides.sh
+dependency_overrides/
 
 # Include when developing application packages.
 pubspec.lock

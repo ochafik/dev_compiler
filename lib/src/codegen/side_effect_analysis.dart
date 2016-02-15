@@ -2,8 +2,6 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-library dev_compiler.src.codegen.side_effect_analysis;
-
 import 'package:analyzer/src/generated/ast.dart';
 import 'package:analyzer/src/generated/constant.dart';
 import 'package:analyzer/src/generated/element.dart';
@@ -36,8 +34,9 @@ bool isStateless(Expression node, [AstNode context]) {
   if (node is ThisExpression || node is SuperExpression) return true;
   if (node is SimpleIdentifier) {
     var e = node.staticElement;
-    if (e is PropertyAccessorElement) e =
-        (e as PropertyAccessorElement).variable;
+    if (e is PropertyAccessorElement) {
+      e = e.variable;
+    }
     if (e is VariableElement && !e.isSynthetic) {
       if (e.isFinal) return true;
       if (e is LocalVariableElement || e is ParameterElement) {
@@ -77,12 +76,15 @@ class _AssignmentFinder extends RecursiveAstVisitor {
   visitSimpleIdentifier(SimpleIdentifier node) {
     // Ignore if qualified.
     AstNode parent = node.parent;
-    if (parent is PrefixedIdentifier &&
-        identical(parent.identifier, node)) return;
-    if (parent is PropertyAccess &&
-        identical(parent.propertyName, node)) return;
-    if (parent is MethodInvocation &&
-        identical(parent.methodName, node)) return;
+    if (parent is PrefixedIdentifier && identical(parent.identifier, node)) {
+      return;
+    }
+    if (parent is PropertyAccess && identical(parent.propertyName, node)) {
+      return;
+    }
+    if (parent is MethodInvocation && identical(parent.methodName, node)) {
+      return;
+    }
     if (parent is ConstructorName) return;
     if (parent is Label) return;
 
@@ -96,8 +98,11 @@ class ConstFieldVisitor {
   final ConstantVisitor _constantVisitor;
 
   ConstFieldVisitor(TypeProvider types, CompilationUnit unit)
-      : _constantVisitor = new ConstantVisitor.con1(types,
-          new ErrorReporter(new RecordingErrorListener(), unit.element.source));
+      // TODO(jmesserly): support -D variables on the command line
+      : _constantVisitor = new ConstantVisitor(
+            new ConstantEvaluationEngine(types, new DeclaredVariables()),
+            new ErrorReporter(
+                new RecordingErrorListener(), unit.element.source));
 
   // TODO(jmesserly): this is used to determine if the field initialization is
   // side effect free. We should make the check more general, as things like
@@ -106,7 +111,7 @@ class ConstFieldVisitor {
   bool isFieldInitConstant(VariableDeclaration field) =>
       field.initializer == null || computeConstant(field) != null;
 
-  DartObjectImpl computeConstant(VariableDeclaration field) {
+  DartObject computeConstant(VariableDeclaration field) {
     // If the constant is already computed by ConstantEvaluator, just return it.
     VariableElementImpl element = field.element;
     var result = element.evaluationResult;

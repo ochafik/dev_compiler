@@ -2,7 +2,7 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-library _js_helper;
+library dart._js_helper;
 
 import 'dart:collection';
 
@@ -11,6 +11,7 @@ import 'dart:_foreign_helper' show
     JS_STRING_CONCAT;
 
 import 'dart:_interceptors';
+import 'dart:_runtime';
 
 part 'annotations.dart';
 part 'native_helper.dart';
@@ -23,7 +24,6 @@ class _Patch {
 }
 
 const _Patch patch = const _Patch();
-
 
 /// Marks the internal map in dart2js, so that internal libraries can is-check
 // them.
@@ -84,11 +84,11 @@ class Primitives {
       if (match != null) {
         if (match[hexIndex] != null) {
           // Cannot fail because we know that the digits are all hex.
-          return JS('num', r'parseInt(#, 16)', source);
+          return JS('int', r'parseInt(#, 16)', source);
         }
         if (match[decimalIndex] != null) {
           // Cannot fail because we know that the digits are all decimal.
-          return JS('num', r'parseInt(#, 10)', source);
+          return JS('int', r'parseInt(#, 10)', source);
         }
         return handleError(source);
       }
@@ -100,7 +100,7 @@ class Primitives {
       if (match != null) {
         if (radix == 10 && match[decimalIndex] != null) {
           // Cannot fail because we know that the digits are all decimal.
-          return JS('num', r'parseInt(#, 10)', source);
+          return JS('int', r'parseInt(#, 10)', source);
         }
         if (radix < 10 || match[decimalIndex] == null) {
           // We know that the characters must be ASCII as otherwise the
@@ -132,7 +132,7 @@ class Primitives {
       }
     }
     if (match == null) return handleError(source);
-    return JS('num', r'parseInt(#, #)', source, radix);
+    return JS('int', r'parseInt(#, #)', source, radix);
   }
 
   static double parseDouble(String source, double handleError(String source)) {
@@ -176,11 +176,11 @@ class Primitives {
   /// In minified mode, uses the unminified names if available.
   static String objectToString(Object object) {
     // String name = objectTypeName(object);
-    String name = JS('String', 'dart.typeName(dart.realRuntimeType(#))', object); 
+    String name = JS('String', 'dart.typeName(dart.realRuntimeType(#))', object);
     return "Instance of '$name'";
   }
 
-  static num dateNow() => JS('int', r'Date.now()');
+  static int dateNow() => JS('int', r'Date.now()');
 
   static void initTicker() {
     if (timerFrequency != null) return;
@@ -188,9 +188,9 @@ class Primitives {
     timerFrequency = 1000;
     timerTicks = dateNow;
     if (JS('bool', 'typeof window == "undefined"')) return;
-    var window = JS('var', 'window');
-    if (window == null) return;
-    var performance = JS('var', '#.performance', window);
+    var jsWindow = JS('var', 'window');
+    if (jsWindow == null) return;
+    var performance = JS('var', '#.performance', jsWindow);
     if (performance == null) return;
     if (JS('bool', 'typeof #.now != "function"', performance)) return;
     timerFrequency = 1000000;
@@ -594,19 +594,6 @@ fillLiteralMap(keyValuePairs, Map result) {
   return result;
 }
 
-/**
- * Called by generated code to convert a Dart closure to a JS
- * closure when the Dart closure is passed to the DOM.
- */
-convertDartClosureToJS(closure, int arity) {
-  // TODO(vsm): Dart2JS wraps closures to:
-  // (a) adjust the calling convention, and
-  // (b) record the source isolate
-  // Do we need either?
-  // See: https://github.com/dart-lang/dev_compiler/issues/164
-  return closure;
-}
-
 bool jsHasOwnProperty(var jsObject, String property) {
   return JS('bool', r'#.hasOwnProperty(#)', jsObject, property);
 }
@@ -775,4 +762,36 @@ int random64() {
 
 String jsonEncodeNative(String string) {
   return JS("String", "JSON.stringify(#)", string);
+}
+
+
+// TODO(jmesserly): this adapter is to work around:
+// https://github.com/dart-lang/dev_compiler/issues/247
+class SyncIterator<E> implements Iterator<E> {
+  final dynamic _jsIterator;
+  E _current;
+
+  SyncIterator(this._jsIterator);
+
+  E get current => _current;
+
+  bool moveNext() {
+    final ret = JS('', '#.next()', _jsIterator);
+    _current = JS('', '#.value', ret);
+    return JS('bool', '!#.done', ret);
+  }
+}
+
+class SyncIterable<E> extends IterableBase<E> {
+  final dynamic _generator;
+  final dynamic _args;
+
+  SyncIterable(this._generator, this._args);
+
+  // TODO(jmesserly): this should be [Symbol.iterator]() method. Unfortunately
+  // we have no way of telling the compiler yet, so it will generate an extra
+  // layer of indirection that wraps the SyncIterator.
+  _jsIterator() => JS('', '#(...#)', _generator, _args);
+
+  Iterator<E> get iterator => new SyncIterator<E>(_jsIterator());
 }

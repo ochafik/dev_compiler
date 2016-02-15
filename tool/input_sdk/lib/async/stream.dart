@@ -296,8 +296,8 @@ abstract class Stream<T> {
    * If a broadcast stream is listened to more than once, each subscription
    * will individually execute `map` for each event.
    */
-  Stream map(convert(T event)) {
-    return new _MapStream<T, dynamic>(this, convert);
+  Stream/*<S>*/ map/*<S>*/(/*=S*/ convert(T event)) {
+    return new _MapStream<T, dynamic/*=S*/>(this, convert);
   }
 
   /**
@@ -317,7 +317,7 @@ abstract class Stream<T> {
       final add = controller.add;
       assert(controller is _StreamController ||
              controller is _BroadcastStreamController);
-      final eventSink = controller;
+      final eventSink = controller as _EventSink<T>;
       final addError = eventSink._addError;
       subscription = this.listen(
           (T event) {
@@ -377,7 +377,7 @@ abstract class Stream<T> {
     void onListen() {
       assert(controller is _StreamController ||
              controller is _BroadcastStreamController);
-      final eventSink = controller;
+      final eventSink = controller as _EventSink<T>;
       subscription = this.listen(
           (T event) {
             Stream newStream;
@@ -458,8 +458,8 @@ abstract class Stream<T> {
    * If a broadcast stream is listened to more than once, each subscription
    * will individually call `convert` and expand the events.
    */
-  Stream expand(Iterable convert(T value)) {
-    return new _ExpandStream<T, dynamic>(this, convert);
+  Stream/*<S>*/ expand/*<S>*/(Iterable/*<S>*/ convert(T value)) {
+    return new _ExpandStream<T, dynamic/*=S*/>(this, convert);
   }
 
   /**
@@ -523,8 +523,9 @@ abstract class Stream<T> {
   }
 
   /** Reduces a sequence of values by repeatedly applying [combine]. */
-  Future fold(var initialValue, combine(var previous, T element)) {
-    _Future result = new _Future();
+  Future/*<S>*/ fold/*<S>*/(var/*=S*/ initialValue,
+      /*=S*/ combine(var/*=S*/ previous, T element)) {
+    _Future/*<S>*/ result = new _Future();
     var value = initialValue;
     StreamSubscription subscription;
     subscription = this.listen(
@@ -1212,20 +1213,20 @@ abstract class Stream<T> {
     StreamSubscription<T> subscription;
     Timer timer;
     Zone zone;
-    Function timeout;
+    Function timeout2;
 
     void onData(T event) {
       timer.cancel();
       controller.add(event);
-      timer = zone.createTimer(timeLimit, timeout);
+      timer = zone.createTimer(timeLimit, timeout2);
     }
     void onError(error, StackTrace stackTrace) {
       timer.cancel();
       assert(controller is _StreamController ||
              controller is _BroadcastStreamController);
-      var eventSink = controller;
+      var eventSink = controller as _EventSink<T>;
       eventSink._addError(error, stackTrace);  // Avoid Zone error replacement.
-      timer = zone.createTimer(timeLimit, timeout);
+      timer = zone.createTimer(timeLimit, timeout2);
     }
     void onDone() {
       timer.cancel();
@@ -1238,7 +1239,7 @@ abstract class Stream<T> {
       // callback.
       zone = Zone.current;
       if (onTimeout == null) {
-        timeout = () {
+        timeout2 = () {
           controller.addError(new TimeoutException("No stream event",
                                                    timeLimit), null);
         };
@@ -1246,7 +1247,7 @@ abstract class Stream<T> {
         onTimeout = zone.registerUnaryCallback(onTimeout);
         _ControllerEventSinkWrapper wrapper =
             new _ControllerEventSinkWrapper(null);
-        timeout = () {
+        timeout2 = () {
           wrapper._sink = controller;  // Only valid during call.
           zone.runUnaryGuarded(onTimeout, wrapper);
           wrapper._sink = null;
@@ -1254,7 +1255,7 @@ abstract class Stream<T> {
       }
 
       subscription = this.listen(onData, onError: onError, onDone: onDone);
-      timer = zone.createTimer(timeLimit, timeout);
+      timer = zone.createTimer(timeLimit, timeout2);
     }
     Future onCancel() {
       timer.cancel();
@@ -1273,7 +1274,7 @@ abstract class Stream<T> {
               },
               () {
                 subscription.resume();
-                timer = zone.createTimer(timeLimit, timeout);
+                timer = zone.createTimer(timeLimit, timeout2);
               },
               onCancel);
     return controller.stream;
@@ -1568,7 +1569,7 @@ abstract class StreamTransformer<S, T> {
    */
   const factory StreamTransformer(
       StreamSubscription<T> transformer(Stream<S> stream, bool cancelOnError))
-      = _StreamSubscriptionTransformer;
+  = _StreamSubscriptionTransformer<S, T>;
 
   /**
    * Creates a [StreamTransformer] that delegates events to the given functions.
@@ -1585,7 +1586,7 @@ abstract class StreamTransformer<S, T> {
       void handleData(S data, EventSink<T> sink),
       void handleError(Object error, StackTrace stackTrace, EventSink<T> sink),
       void handleDone(EventSink<T> sink)})
-          = _StreamHandlerTransformer;
+      = _StreamHandlerTransformer<S, T>;
 
   /**
    * Transform the incoming [stream]'s events.

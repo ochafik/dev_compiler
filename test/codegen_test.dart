@@ -8,8 +8,8 @@
 library dev_compiler.test.codegen_test;
 
 import 'dart:io';
-import 'package:cli_util/cli_util.dart' show getSdkDir;
-import 'package:analyzer/src/generated/engine.dart' show AnalysisEngine, Logger;
+import 'package:analyzer/src/generated/engine.dart'
+    show AnalysisContext, AnalysisEngine, Logger;
 import 'package:analyzer/src/generated/java_engine.dart' show CaughtException;
 import 'package:args/args.dart';
 import 'package:logging/logging.dart' show Level;
@@ -17,17 +17,29 @@ import 'package:path/path.dart' as path;
 import 'package:test/test.dart';
 
 import 'package:dev_compiler/devc.dart';
+import 'package:dev_compiler/src/compiler.dart' show defaultRuntimeFiles;
 import 'package:dev_compiler/src/options.dart';
-import 'package:dev_compiler/src/dependency_graph.dart'
-    show defaultRuntimeFiles;
-import 'package:dev_compiler/src/utils.dart'
-    show computeHash, computeHashFromFile;
-import 'package:html/parser.dart' as html;
 
-import 'test_util.dart' show testDirectory;
+import 'testing.dart' show realSdkContext, testDirectory;
+import 'multitest.dart';
 
 final ArgParser argParser = new ArgParser()
   ..addOption('dart-sdk', help: 'Dart SDK Path', defaultsTo: null);
+
+final inputDir = path.join(testDirectory, 'codegen');
+
+Iterable<String> _findTests(String dir, RegExp filePattern) {
+  var files = new Directory(dir)
+      .listSync()
+      .where((f) => f is File)
+      .map((f) => f.path)
+      .where((p) => p.endsWith('.dart') && filePattern.hasMatch(p));
+  if (dir != inputDir) {
+    files = files
+        .where((p) => p.endsWith('_test.dart') || p.endsWith('_multi.dart'));
+  }
+  return files;
+}
 
 main(arguments) {
   if (arguments == null) arguments = [];
@@ -35,6 +47,8 @@ main(arguments) {
   var filePattern = new RegExp(args.rest.length > 0 ? args.rest[0] : '.');
   var compilerMessages = new StringBuffer();
   var loggerSub;
+
+  bool codeCoverage = Platform.environment.containsKey('COVERALLS_TOKEN');
 
   setUp(() {
     compilerMessages.clear();
@@ -48,68 +62,134 @@ main(arguments) {
     }
   });
 
-  var inputDir = path.join(testDirectory, 'codegen');
-  var actualDir = path.join(inputDir, 'actual');
-  var paths = new Directory(inputDir)
-      .listSync()
-      .where((f) => f is File)
-      .map((f) => f.path)
-      .where((p) => p.endsWith('.dart') && filePattern.hasMatch(p));
+  var expectDir = path.join(inputDir, 'expect');
 
-  compile(String entryPoint, String sdkPath, {bool checkSdk: false,
-      bool serverMode: false, bool sourceMaps: false, String subDir}) {
+  BatchCompiler createCompiler(AnalysisContext context,
+      {bool checkSdk: false,
+      bool sourceMaps: false,
+      bool destructureNamedParams: false,
+      bool closure: false,
+      ModuleFormat moduleFormat: ModuleFormat.legacy}) {
     // TODO(jmesserly): add a way to specify flags in the test file, so
     // they're more self-contained.
     var runtimeDir = path.join(path.dirname(testDirectory), 'lib', 'runtime');
     var options = new CompilerOptions(
-        outputDir: subDir == null ? actualDir : path.join(actualDir, subDir),
+        codegenOptions: new CodegenOptions(
+            outputDir: expectDir,
+            emitSourceMaps: sourceMaps,
+            closure: closure,
+            destructureNamedParams: destructureNamedParams,
+            forceCompile: checkSdk,
+            moduleFormat: moduleFormat),
         useColors: false,
-        emitSourceMaps: sourceMaps,
-        forceCompile: checkSdk,
         checkSdk: checkSdk,
-        entryPointFile: entryPoint,
-        dartSdkPath: sdkPath,
         runtimeDir: runtimeDir,
-        serverMode: serverMode,
-        enableHashing: serverMode);
-    return new Compiler(options).run();
+        inputBaseDir: inputDir);
+    var reporter = createErrorReporter(context, options);
+    return new BatchCompiler(context, options, reporter: reporter);
   }
-  var realSdk = getSdkDir(arguments).path;
 
-  // Remove old output, and `packages` symlinks which mess up the diff.
-  var dir = new Directory(actualDir);
-  if (dir.existsSync()) dir.deleteSync(recursive: true);
-  var packagesDirs = new Directory(inputDir)
-      .listSync(recursive: true)
-      .where((d) => d is Directory && path.basename(d.path) == 'packages');
-  packagesDirs.forEach((d) => d.deleteSync());
-
-  for (var filePath in paths) {
-    var filename = path.basenameWithoutExtension(filePath);
-
-    test('devc $filename.dart', () {
-      compilerMessages.writeln('// Messages from compiling $filename.dart');
-
-      // TODO(jmesserly): this was added to get some coverage of source maps
-      // We need a more comprehensive strategy to test them.
-      var sourceMaps = filename == 'map_keys';
-      var result = compile(filePath, realSdk, sourceMaps: sourceMaps);
-      var success = !result.failure;
-
+  bool compile(BatchCompiler compiler, String filePath) {
+    compiler.compileFromUriString(filePath, (String url) {
       // Write compiler messages to disk.
-      new File(path.join(actualDir, '$filename.txt'))
-          .writeAsStringSync(compilerMessages.toString());
+      var messagePath = '${path.withoutExtension(url)}.txt';
+      var file = new File(messagePath);
+      var message = '''
+// Messages from compiling ${path.basenameWithoutExtension(url)}.dart
+$compilerMessages''';
+      var dir = file.parent;
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+      file.writeAsStringSync(message);
+      compilerMessages.clear();
+    });
+    return !compiler.failure;
+  }
 
-      var outFile = new File(path.join(actualDir, '$filename.js'));
-      expect(outFile.existsSync(), success,
-          reason: '${outFile.path} was created iff compilation succeeds');
+  var testDirs = <String>['language', path.join('lib', 'typed_data')];
 
-      // TODO(jmesserly): ideally we'd diff the output here. For now it
-      // happens in the containing shell script.
+  var multitests = new Set<String>();
+  {
+    // Expand wacky multitests into a bunch of test files.
+    // We'll compile each one as if it was an input.
+    for (var testDir in testDirs) {
+      var fullDir = path.join(inputDir, testDir);
+      var testFiles = _findTests(fullDir, filePattern);
+
+      for (var filePath in testFiles) {
+        if (filePath.endsWith('_multi.dart')) continue;
+
+        var contents = new File(filePath).readAsStringSync();
+        if (isMultiTest(contents)) {
+          multitests.add(filePath);
+
+          var tests = new Map<String, String>();
+          var outcomes = new Map<String, Set<String>>();
+          extractTestsFromMultitest(filePath, contents, tests, outcomes);
+
+          var filename = path.basenameWithoutExtension(filePath);
+          tests.forEach((name, contents) {
+            new File(path.join(fullDir, '${filename}_${name}_multi.dart'))
+                .writeAsStringSync(contents);
+          });
+        }
+      }
+    }
+  }
+
+  var batchCompiler = createCompiler(realSdkContext);
+
+  var allDirs = [null];
+  allDirs.addAll(testDirs);
+  for (var dir in allDirs) {
+    if (codeCoverage && dir != null) continue;
+
+    group('dartdevc ' + path.join('test', 'codegen', dir), () {
+      var outDir = new Directory(path.join(expectDir, dir));
+      if (!outDir.existsSync()) outDir.createSync(recursive: true);
+
+      var testFiles = _findTests(path.join(inputDir, dir), filePattern);
+      for (var filePath in testFiles) {
+        if (multitests.contains(filePath)) continue;
+
+        var filename = path.basenameWithoutExtension(filePath);
+
+        test('$filename.dart', () {
+          // TODO(jmesserly): this was added to get some coverage of source maps
+          // and closure annotations.
+          // We need a more comprehensive strategy to test them.
+          var sourceMaps = filename == 'map_keys';
+          var closure = filename == 'closure';
+          var destructureNamedParams = filename == 'destructuring' || closure;
+          var moduleFormat = filename == 'es6_modules' || closure
+              ? ModuleFormat.es6
+              : filename == 'node_modules'
+                  ? ModuleFormat.node
+                  : ModuleFormat.legacy;
+          var success;
+          // TODO(vsm): Is it okay to reuse the same context here?  If there is
+          // overlap between test files, we may need separate ones for each
+          // compiler.
+          var compiler = (sourceMaps ||
+                  closure ||
+                  destructureNamedParams ||
+                  moduleFormat != ModuleFormat.legacy)
+              ? createCompiler(realSdkContext,
+                  sourceMaps: sourceMaps,
+                  destructureNamedParams: destructureNamedParams,
+                  closure: closure,
+                  moduleFormat: moduleFormat)
+              : batchCompiler;
+          success = compile(compiler, filePath);
+
+          var outFile = new File(path.join(outDir.path, '$filename.js'));
+          expect(!success || outFile.existsSync(), true,
+              reason: '${outFile.path} was created if compilation succeeds');
+        });
+      }
     });
   }
 
-  if (Platform.environment.containsKey('COVERALLS_TOKEN')) {
+  if (codeCoverage) {
     group('sdk', () {
       // The analyzer does not bubble exception messages for certain internal
       // dart:* library failures, such as failing to find
@@ -126,12 +206,16 @@ main(arguments) {
       });
 
       test('devc dart:core', () {
+        var testSdkContext = createAnalysisContextWithSources(
+            new SourceResolverOptions(
+                dartSdkPath:
+                    path.join(testDirectory, '..', 'tool', 'generated_sdk')));
+
         // Get the test SDK. We use a checked in copy so test expectations can
         // be generated against a specific SDK version.
-        var testSdk = path.join(testDirectory, 'generated_sdk');
-        var result = compile('dart:core', testSdk, checkSdk: true);
-        var outputDir = new Directory(path.join(actualDir, 'core'));
-        var outFile = new File(path.join(actualDir, 'dart/core.js'));
+        var compiler = createCompiler(testSdkContext, checkSdk: true);
+        compile(compiler, 'dart:core');
+        var outFile = new File(path.join(expectDir, 'dart/core.js'));
         expect(outFile.existsSync(), true,
             reason: '${outFile.path} was created for dart:core');
       });
@@ -143,24 +227,12 @@ main(arguments) {
 
   test('devc jscodegen sunflower.html', () {
     var filePath = path.join(inputDir, 'sunflower', 'sunflower.html');
-    compilerMessages.writeln('// Messages from compiling sunflower.html');
+    var success = compile(batchCompiler, filePath);
 
-    var result = compile(filePath, realSdk, subDir: 'sunflower');
-    var success = !result.failure;
-
-    // Write compiler messages to disk.
-    new File(path.join(actualDir, 'sunflower', 'sunflower.txt'))
-        .writeAsStringSync(compilerMessages.toString());
-
-    var expectedFiles = [
-      'sunflower.html',
-      'sunflower.js',
-      'sunflower.css',
-      'math.png',
-    ]..addAll(expectedRuntime);
+    var expectedFiles = ['sunflower.html', 'sunflower.js',];
 
     for (var filepath in expectedFiles) {
-      var outFile = new File(path.join(actualDir, 'sunflower', filepath));
+      var outFile = new File(path.join(expectDir, 'sunflower', filepath));
       expect(outFile.existsSync(), success,
           reason: '${outFile.path} was created iff compilation succeeds');
     }
@@ -168,14 +240,7 @@ main(arguments) {
 
   test('devc jscodegen html_input.html', () {
     var filePath = path.join(inputDir, 'html_input.html');
-    compilerMessages.writeln('// Messages from compiling html_input.html');
-
-    var result = compile(filePath, realSdk);
-    var success = !result.failure;
-
-    // Write compiler messages to disk.
-    new File(path.join(actualDir, 'html_input.txt'))
-        .writeAsStringSync(compilerMessages.toString());
+    var success = compile(batchCompiler, filePath);
 
     var expectedFiles = [
       'html_input.html',
@@ -187,85 +252,16 @@ main(arguments) {
     ]..addAll(expectedRuntime);
 
     for (var filepath in expectedFiles) {
-      var outFile = new File(path.join(actualDir, filepath));
+      var outFile = new File(path.join(expectDir, filepath));
       expect(outFile.existsSync(), success,
           reason: '${outFile.path} was created iff compilation succeeds');
     }
-
-    var notExpectedFiles = [
-      'dev_compiler/runtime/messages_widget.js',
-      'dev_compiler/runtime/messages.css'
-    ];
-    for (var filepath in notExpectedFiles) {
-      var outFile = new File(path.join(actualDir, filepath));
-      expect(outFile.existsSync(), isFalse,
-          reason: '${outFile.path} should only be generated in server mode');
-    }
-  });
-
-  test('devc jscodegen html_input.html server mode', () {
-    var filePath = path.join(inputDir, 'html_input.html');
-    compilerMessages.writeln('// Messages from compiling html_input.html');
-
-    var result =
-        compile(filePath, realSdk, serverMode: true, subDir: 'server_mode');
-    var success = !result.failure;
-
-    // Write compiler messages to disk.
-    new File(path.join(actualDir, 'server_mode', 'html_input.txt'))
-        .writeAsStringSync(compilerMessages.toString());
-
-    var expectedFiles = [
-      'dir/html_input_a.js',
-      'dir/html_input_b.js',
-      'dir/html_input_c.js',
-      'dir/html_input_d.js',
-      'dir/html_input_e.js',
-      'dev_compiler/runtime/messages_widget.js',
-      'dev_compiler/runtime/messages.css'
-    ]..addAll(expectedRuntime);
-
-    // Parse the HTML file and verify its contents were expected.
-    var htmlPath = path.join(actualDir, 'server_mode', 'html_input.html');
-    var doc = html.parse(new File(htmlPath).readAsStringSync());
-
-    for (var filepath in expectedFiles) {
-      var outPath = path.join(actualDir, 'server_mode', filepath);
-      expect(new File(outPath).existsSync(), success,
-          reason: '$outPath was created iff compilation succeeds');
-
-      var query;
-      if (filepath.endsWith('js')) {
-        var hash;
-        if (filepath.startsWith('dev_compiler')) {
-          hash = computeHashFromFile(outPath);
-        } else {
-          // TODO(jmesserly): see if we can get this to return the same
-          // answer as computeHashFromFile.
-          hash = computeHash(new File(outPath).readAsStringSync());
-        }
-        query = 'script[src="$filepath?____cached=$hash"]';
-      } else {
-        var hash = computeHashFromFile(outPath);
-        query = 'link[href="$filepath?____cached=$hash"]';
-      }
-      expect(doc.querySelector(query), isNotNull,
-          reason: "should find `$query` in $htmlPath for $outPath");
-    }
-
-    // Clean up the server mode folder, otherwise it causes diff churn.
-    var dir = new Directory(path.join(actualDir, 'server_mode'));
-    if (dir.existsSync()) dir.deleteSync(recursive: true);
   });
 }
 
 /// An implementation of analysis engine's [Logger] that prints.
 class PrintLogger implements Logger {
   @override void logError(String message, [CaughtException exception]) {
-    print('[AnalysisEngine] error $message $exception');
-  }
-
-  @override void logError2(String message, Object exception) {
     print('[AnalysisEngine] error $message $exception');
   }
 

@@ -8,6 +8,7 @@
 library dev_compiler.tool.patch_sdk;
 
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:analyzer/analyzer.dart';
 import 'package:analyzer/src/generated/sdk.dart';
@@ -15,8 +16,8 @@ import 'package:path/path.dart' as path;
 
 void main(List<String> argv) {
   if (argv.length < 2) {
-    var self = path.relative(Platform.script.path);
-    var toolDir = path.relative(path.dirname(Platform.script.path));
+    var self = path.relative(path.fromUri(Platform.script));
+    var toolDir = path.relative(path.dirname(path.fromUri(Platform.script)));
 
     var inputExample = path.join(toolDir, 'input_sdk');
     var outExample = path.relative(
@@ -37,8 +38,6 @@ void main(List<String> argv) {
   var patchIn = path.join(input, 'patch');
   var privateIn = path.join(input, 'private');
   var sdkOut = path.join(argv[1], 'lib');
-  var privateLibOut =
-      path.normalize(path.join(sdkOut, '_internal', 'compiler', 'js_lib'));
 
   var INTERNAL_PATH = '_internal/compiler/js_lib/';
 
@@ -46,6 +45,10 @@ void main(List<String> argv) {
   var libContents = new File(path.join(sdkLibIn, '_internal', 'libraries.dart'))
       .readAsStringSync();
   _writeSync(path.join(sdkOut, '_internal', 'libraries.dart'), libContents);
+  _writeSync(
+      path.join(
+          sdkOut, '_internal', 'sdk_library_metadata', 'lib', 'libraries.dart'),
+      libContents);
   _writeSync(path.join(sdkOut, '..', 'version'),
       new File(path.join(sdkLibIn, '..', 'version')).readAsStringSync());
 
@@ -70,17 +73,21 @@ void main(List<String> argv) {
 
     var libraryFile = new File(libraryIn);
     if (libraryFile.existsSync()) {
-      var contents = <String>[];
-      var paths = <String>[];
+      var outPaths = <String>[libraryOut];
       var libraryContents = libraryFile.readAsStringSync();
-      paths.add(libraryOut);
-      contents.add(libraryContents);
+
+      int inputModifyTime =
+          libraryFile.lastModifiedSync().millisecondsSinceEpoch;
+      var partFiles = <File>[];
       for (var part in parseDirectives(libraryContents).directives) {
         if (part is PartDirective) {
           var partPath = part.uri.stringValue;
-          paths.add(path.join(path.dirname(libraryOut), partPath));
-          contents.add(new File(path.join(path.dirname(libraryIn), partPath))
-              .readAsStringSync());
+          outPaths.add(path.join(path.dirname(libraryOut), partPath));
+
+          var partFile = new File(path.join(path.dirname(libraryIn), partPath));
+          partFiles.add(partFile);
+          inputModifyTime = math.max(inputModifyTime,
+              partFile.lastModifiedSync().millisecondsSinceEpoch);
         }
       }
 
@@ -88,14 +95,41 @@ void main(List<String> argv) {
       var patchPath = path.join(
           patchIn, path.basenameWithoutExtension(libraryIn) + '_patch.dart');
 
-      if (new File(patchPath).existsSync()) {
-        var patchContents = new File(patchPath).readAsStringSync();
-        contents = _patchLibrary(contents, patchContents);
+      var patchFile = new File(patchPath);
+      bool patchExists = patchFile.existsSync();
+      if (patchExists) {
+        inputModifyTime = math.max(inputModifyTime,
+            patchFile.lastModifiedSync().millisecondsSinceEpoch);
       }
-      for (var i = 0; i < paths.length; i++) {
-        var outPath =
-            path.join(sdkOut, path.relative(paths[i], from: sdkLibIn));
-        _writeSync(outPath, contents[i]);
+
+      // Compute output paths
+      outPaths = outPaths
+          .map((p) => path.join(sdkOut, path.relative(p, from: sdkLibIn)))
+          .toList();
+
+      // Compare output modify time with input modify time.
+      bool needsUpdate = false;
+      for (var outPath in outPaths) {
+        var outFile = new File(outPath);
+        if (!outFile.existsSync() ||
+            outFile.lastModifiedSync().millisecondsSinceEpoch <
+                inputModifyTime) {
+          needsUpdate = true;
+          break;
+        }
+      }
+
+      if (needsUpdate) {
+        var contents = <String>[libraryContents];
+        contents.addAll(partFiles.map((f) => f.readAsStringSync()));
+        if (patchExists) {
+          var patchContents = patchFile.readAsStringSync();
+          contents = _patchLibrary(contents, patchContents);
+        }
+
+        for (var i = 0; i < outPaths.length; i++) {
+          _writeSync(outPaths[i], contents[i]);
+        }
       }
     }
   }
@@ -166,14 +200,14 @@ class PatchApplier extends GeneralizingAstVisitor {
 
   /// Merges directives and declarations that are not `@patch` into the library.
   void _mergeUnpatched(CompilationUnit unit) {
-
     // Merge imports from the patch
     // TODO(jmesserly): remove duplicate imports
 
     // To patch a library, we must have a library directive
     var libDir = unit.directives.first as LibraryDirective;
-    int importPos = unit.directives.lastWhere((d) => d is ImportDirective,
-        orElse: () => libDir).end;
+    int importPos = unit.directives
+        .lastWhere((d) => d is ImportDirective, orElse: () => libDir)
+        .end;
     for (var d in patch.unit.directives.where((d) => d is ImportDirective)) {
       _merge(d, importPos);
     }

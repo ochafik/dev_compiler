@@ -3,124 +3,118 @@
 // BSD-style license that can be found in the LICENSE file.
 
 /// Summarizes the information produced by the checker.
-library dev_compiler.src.report;
 
 import 'dart:math' show max;
 
-import 'package:analyzer/src/generated/ast.dart' show AstNode, CompilationUnit;
 import 'package:analyzer/src/generated/engine.dart' show AnalysisContext;
-import 'package:analyzer/src/generated/source.dart' show Source;
+import 'package:analyzer/src/generated/error.dart';
 import 'package:logging/logging.dart';
 import 'package:path/path.dart' as path;
 import 'package:source_span/source_span.dart';
 
-import 'info.dart';
 import 'utils.dart';
 import 'summary.dart';
 
-/// A message (error or warning) produced by the dev_compiler and it's location
-/// information.
-///
-/// Currently the location information includes only the offsets within a file
-/// where the error occurs. This is used in the context of a [CheckerReporter],
-/// where the current file is being tracked.
-class Message {
-  // Message description.
-  final String message;
-
-  /// Log level. This is a placeholder for severity.
-  final Level level;
-
-  /// Offset where the error message begins in the tracked source file.
-  final int begin;
-
-  /// Offset where the error message ends in the tracked source file.
-  final int end;
-
-  const Message(this.message, this.level, this.begin, this.end);
-}
-
-// Interface used to report error messages from the checker.
-abstract class CheckerReporter {
-  final AnalysisContext _context;
-  CompilationUnit _unit;
-  Source _unitSource;
-
-  CheckerReporter(this._context);
-
-  /// Called when starting to process a library.
-  void enterLibrary(Uri uri);
-  void leaveLibrary();
-
-  /// Called when starting to process an HTML source file.
-  void enterHtml(Uri uri);
-  void leaveHtml();
-
-  /// Called when starting to process a source. All subsequent log entries must
-  /// belong to this source until the next call to enterSource.
-  void enterCompilationUnit(CompilationUnit unit, [Source source]) {
-    _unit = unit;
-    _unitSource = source;
-  }
-  void leaveCompilationUnit() {
-    _unit = null;
-    _unitSource = null;
-  }
-
-  void log(Message message);
-
-  // Called in server-mode.
-  void clearLibrary(Uri uri);
-  void clearHtml(Uri uri);
-  void clearAll();
-
-  SourceSpanWithContext _createSpan(int start, int end) =>
-      createSpan(_context, _unit, start, end, _unitSource);
-}
-
 final _checkerLogger = new Logger('dev_compiler.checker');
 
-/// Simple reporter that logs checker messages as they are seen.
-class LogReporter extends CheckerReporter {
-  final bool useColors;
-  Source _current;
+/// Collects errors, and then sorts them and sends them
+class ErrorCollector implements AnalysisErrorListener {
+  final AnalysisErrorListener listener;
+  final List<AnalysisError> _errors = [];
 
-  LogReporter(AnalysisContext context, {this.useColors: false})
-      : super(context);
+  ErrorCollector(this.listener);
 
-  void enterLibrary(Uri uri) {}
-  void leaveLibrary() {}
+  /// Flushes errors to the log. Until this is called, errors are buffered.
+  void flush() {
+    // TODO(jmesserly): this code was taken from analyzer_cli.
+    // sort errors
+    _errors.sort((AnalysisError error1, AnalysisError error2) {
+      // severity
+      var severity1 = _strongModeErrorSeverity(error1);
+      var severity2 = _strongModeErrorSeverity(error2);
+      int compare = severity2.compareTo(severity1);
+      if (compare != 0) return compare;
 
-  void enterHtml(Uri uri) {}
-  void leaveHtml() {}
+      // path
+      compare = Comparable.compare(error1.source.fullName.toLowerCase(),
+          error2.source.fullName.toLowerCase());
+      if (compare != 0) return compare;
 
-  void log(Message message) {
-    if (message is StaticInfo) {
-      assert(message.node.root == _unit);
-    }
-    // TODO(sigmund): convert to use span information from AST (issue #73)
-    final span = _createSpan(message.begin, message.end);
-    final level = message.level;
-    final color = useColors ? colorOf(level.name) : null;
-    final text = '[${message.runtimeType}] ${message.message}';
-    _checkerLogger.log(level, span.message(text, color: color));
+      // offset
+      compare = error1.offset - error2.offset;
+      if (compare != 0) return compare;
+
+      // compare message, in worst case.
+      return error1.message.compareTo(error2.message);
+    });
+
+    _errors.forEach(listener.onError);
+    _errors.clear();
   }
 
-  void clearLibrary(Uri uri) {}
-  void clearHtml(Uri uri) {}
-  void clearAll() {}
+  void onError(AnalysisError error) {
+    _errors.add(error);
+  }
 }
 
+ErrorSeverity _strongModeErrorSeverity(AnalysisError error) {
+  // Upgrade analyzer warnings to errors.
+  // TODO(jmesserly: reconcile this with analyzer_cli
+  var severity = error.errorCode.errorSeverity;
+  if (!isStrongModeError(error.errorCode) &&
+      severity == ErrorSeverity.WARNING) {
+    return ErrorSeverity.ERROR;
+  }
+  return severity;
+}
+
+/// Simple reporter that logs checker messages as they are seen.
+class LogReporter implements AnalysisErrorListener {
+  final AnalysisContext _context;
+  final bool useColors;
+  final List<AnalysisError> _errors = [];
+
+  LogReporter(this._context, {this.useColors: false});
+
+  void onError(AnalysisError error) {
+    var level = _severityToLevel[_strongModeErrorSeverity(error)];
+
+    // TODO(jmesserly): figure out what to do with the error's name.
+    var lineInfo = _context.computeLineInfo(error.source);
+    var location = lineInfo.getLocation(error.offset);
+
+    // [warning] 'foo' is not a... (/Users/.../tmp/foo.dart, line 1, col 2)
+    var text = new StringBuffer()
+      ..write('[${errorCodeName(error.errorCode)}] ')
+      ..write(error.message)
+      ..write(' (${path.prettyUri(error.source.uri)}')
+      ..write(', line ${location.lineNumber}, col ${location.columnNumber})');
+
+    // TODO(jmesserly): just print these instead of sending through logger?
+    _checkerLogger.log(level, text);
+  }
+}
+
+// TODO(jmesserly): remove log levels, instead just use severity.
+const _severityToLevel = const {
+  ErrorSeverity.ERROR: Level.SEVERE,
+  ErrorSeverity.WARNING: Level.WARNING,
+  ErrorSeverity.INFO: Level.INFO
+};
+
 /// A reporter that gathers all the information in a [GlobalSummary].
-class SummaryReporter extends CheckerReporter {
+class SummaryReporter implements AnalysisErrorListener {
   GlobalSummary result = new GlobalSummary();
-  IndividualSummary _current;
   final Level _level;
+  final AnalysisContext _context;
 
-  SummaryReporter(AnalysisContext context, [this._level = Level.ALL])
-      : super(context);
+  SummaryReporter(this._context, [this._level = Level.ALL]);
 
-  void enterLibrary(Uri uri) {
+  IndividualSummary _getIndividualSummary(Uri uri) {
+    if (uri.path.endsWith('.html')) {
+      return result.loose.putIfAbsent('$uri', () => new HtmlSummary('$uri'));
+    }
+
     var container;
     if (uri.scheme == 'package') {
       var pname = path.split(uri.path)[0];
@@ -131,52 +125,49 @@ class SummaryReporter extends CheckerReporter {
     } else {
       container = result.loose;
     }
-    _current = container.putIfAbsent('$uri', () => new LibrarySummary('$uri'));
+    return container.putIfAbsent('$uri', () => new LibrarySummary('$uri'));
   }
 
-  void leaveLibrary() {
-    _current = null;
-  }
-
-  void enterHtml(Uri uri) {
-    _current = result.loose.putIfAbsent('$uri', () => new HtmlSummary('$uri'));
-  }
-
-  void leaveHtml() {
-    _current = null;
-  }
-
-  @override
-  void enterCompilationUnit(CompilationUnit unit, [Source source]) {
-    super.enterCompilationUnit(unit, source);
-    if (_current is LibrarySummary) {
-      int lines = _unit.lineInfo.getLocation(_unit.endToken.end).lineNumber;
-      (_current as LibrarySummary).lines += lines;
-    }
-  }
-
-  void log(Message message) {
+  void onError(AnalysisError error) {
     // Only summarize messages per configured logging level
-    if (message.level < _level) return;
-    final span = _createSpan(message.begin, message.end);
-    _current.messages.add(new MessageSummary('${message.runtimeType}',
-        message.level.name.toLowerCase(), span, message.message));
+    var code = error.errorCode;
+    if (_severityToLevel[code.errorSeverity] < _level) return;
+
+    var span = _toSpan(_context, error);
+    var summary = _getIndividualSummary(error.source.uri);
+    if (summary is LibrarySummary) {
+      summary.recordSourceLines(error.source.uri, () {
+        // TODO(jmesserly): parsing is serious overkill for this.
+        // Should be cached, but still.
+        // On the other hand, if we are going to parse, we could get a much
+        // better source lines of code estimate by excluding things like
+        // comments, blank lines, and closing braces.
+        var unit = _context.parseCompilationUnit(error.source);
+        return unit.lineInfo.getLocation(unit.endToken.end).lineNumber;
+      });
+    }
+    summary.messages.add(new MessageSummary(errorCodeName(code),
+        code.errorSeverity.displayName, span, error.message));
+  }
+
+  // TODO(jmesserly): fix to not depend on SourceSpan. This will be really slow
+  // because it will reload source text from disk, for every single message...
+  SourceSpanWithContext _toSpan(AnalysisContext context, AnalysisError error) {
+    var source = error.source;
+    var lineInfo = context.computeLineInfo(source);
+    var content = context.getContents(source).data;
+    var start = error.offset;
+    var end = start + error.length;
+    return createSpanHelper(lineInfo, start, end, source, content);
   }
 
   void clearLibrary(Uri uri) {
-    enterLibrary(uri);
-    _current.messages.clear();
-    (_current as LibrarySummary).lines = 0;
-    leaveLibrary();
+    (_getIndividualSummary(uri) as LibrarySummary).clear();
   }
 
   void clearHtml(Uri uri) {
     HtmlSummary htmlSummary = result.loose['$uri'];
     if (htmlSummary != null) htmlSummary.messages.clear();
-  }
-
-  clearAll() {
-    result = new GlobalSummary();
   }
 }
 
@@ -189,10 +180,9 @@ String summaryToString(GlobalSummary summary) {
   // Declare columns and add header
   table.declareColumn('package');
   table.declareColumn('AnalyzerError', abbreviate: true);
-  var activeInfoTypes =
-      infoTypes.where((type) => counter.totals['$type'] != null);
-  activeInfoTypes
-      .forEach((type) => table.declareColumn('$type', abbreviate: true));
+
+  var activeInfoTypes = counter.totals.keys;
+  activeInfoTypes.forEach((t) => table.declareColumn(t, abbreviate: true));
   table.declareColumn('LinesOfCode', abbreviate: true);
   table.addHeader();
 
@@ -201,8 +191,7 @@ String summaryToString(GlobalSummary summary) {
   for (var package in counter.errorCount.keys) {
     appendCount(package);
     appendCount(counter.errorCount[package]['AnalyzerError']);
-    activeInfoTypes
-        .forEach((e) => appendCount(counter.errorCount[package]['$e']));
+    activeInfoTypes.forEach((t) => appendCount(counter.errorCount[package][t]));
     appendCount(counter.linesOfCode[package]);
   }
 
@@ -211,7 +200,7 @@ String summaryToString(GlobalSummary summary) {
   table.addHeader();
   table.addEntry('total');
   appendCount(counter.totals['AnalyzerError']);
-  activeInfoTypes.forEach((type) => appendCount(counter.totals['$type']));
+  activeInfoTypes.forEach((t) => appendCount(counter.totals[t]));
   appendCount(counter.totalLinesOfCode);
 
   appendPercent(count, total) {
@@ -223,8 +212,7 @@ String summaryToString(GlobalSummary summary) {
   var totalLOC = counter.totalLinesOfCode;
   table.addEntry('%');
   appendPercent(counter.totals['AnalyzerError'], totalLOC);
-  activeInfoTypes
-      .forEach((type) => appendPercent(counter.totals['$type'], totalLOC));
+  activeInfoTypes.forEach((t) => appendPercent(counter.totals[t], totalLOC));
   appendCount(100);
 
   return table.toString();
@@ -265,7 +253,7 @@ class _Table {
       while (abbreviations[headerName] != null) headerName = "$headerName'";
       abbreviations[headerName] = name;
     }
-    widths.add(max(5, headerName.length + 1));
+    widths.add(max(5, headerName.length + 1) as int);
     header.add(headerName);
     _totalColumns++;
   }

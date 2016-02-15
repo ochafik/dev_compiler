@@ -5,11 +5,12 @@
 /// Common logic needed to provide a Dart SDK to the analyzer's resolver. This
 /// includes logic to determine where the sdk is located in the filesystem, and
 /// definitions to provide mock sdks.
-library dev_compiler.src.dart_sdk;
 
-import 'package:analyzer/src/generated/engine.dart';
+import 'package:analyzer/src/generated/engine.dart'
+    show AnalysisContext, TimestampedData;
 import 'package:analyzer/src/generated/sdk.dart';
 import 'package:analyzer/src/generated/source.dart';
+import 'package:analyzer/src/context/context.dart';
 
 /// Dart SDK which contains a mock implementation of the SDK libraries. May be
 /// used to speed up execution when most of the core libraries is not needed.
@@ -145,7 +146,10 @@ final Map<String, String> mockSdkSources = {
         class _Proxy { const _Proxy(); }
         const Object proxy = const _Proxy();
 
-        class Iterable<E> {}
+        class Iterable<E> {
+          fold(initialValue, combine(previousValue, E element)) {}
+          Iterable map(f(E element)) {}
+        }
         class List<E> implements Iterable<E> {
           List([int length]);
           List.filled(int length, E fill);
@@ -156,12 +160,23 @@ final Map<String, String> mockSdkSources = {
         ''',
   'dart:async': '''
         class Future<T> {
-          Future then(callback) {}
+          Future(computation()) {}
+          Future.value(T t) {}
+          Future then(onValue(T value)) {}
+          static Future<List> wait(Iterable<Future> futures) {}
         }
         class Stream<T> {}
   ''',
   'dart:html': '''
         library dart.html;
         class HtmlElement {}
+        ''',
+  'dart:math': '''
+        library dart.math;
+        class Random {
+          bool nextBool() {}
+        }
+        num min(num x, num y) {}
+        num max(num x, num y) {}
         ''',
 };

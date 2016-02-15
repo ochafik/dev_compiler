@@ -2,7 +2,7 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-library _foreign_helper;
+library dart._foreign_helper;
 
 /**
  * Emits a JavaScript code fragment parameterized by arguments.
@@ -110,6 +110,15 @@ JS(String typeDescription, String codeTemplate,
     [arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11])
 {}
 
+/// Annotates the compiled Js name for fields and methods.
+/// Similar behaviour to `JS` from `package:js/js.dart` (but usable from runtime
+/// files), and not to be confused with `JSName` from `js_helper` (which deals
+/// with names of externs).
+class JSExportName {
+  final String name;
+  const JSExportName(this.name);
+}
+
 /**
  * Returns the isolate in which this code is running.
  */
@@ -125,28 +134,6 @@ abstract class IsolateContext {
  * Invokes [function] in the context of [isolate].
  */
 JS_CALL_IN_ISOLATE(isolate, Function function) {}
-
-/**
- * Converts the Dart closure [function] into a JavaScript closure.
- *
- * Warning: This is no different from [RAW_DART_FUNCTION_REF] which means care
- * must be taken to store the current isolate.
- */
-DART_CLOSURE_TO_JS(Function function) {}
-
-/**
- * Returns a raw reference to the JavaScript function which implements
- * [function].
- *
- * Warning: this is dangerous, you should probably use
- * [DART_CLOSURE_TO_JS] instead. The returned object is not a valid
- * Dart closure, does not store the isolate context or arity.
- *
- * A valid example of where this can be used is as the second argument
- * to V8's Error.captureStackTrace. See
- * https://code.google.com/p/v8/wiki/JavaScriptStackTraceApi.
- */
-RAW_DART_FUNCTION_REF(Function function) {}
 
 /**
  * Sets the current isolate to [isolate].
@@ -293,4 +280,21 @@ class JS_CONST {
 String JS_STRING_CONCAT(String a, String b) {
   // This body is unused, only here for type analysis.
   return JS('String', '# + #', a, b);
+}
+
+/// Same `@rest` annotation and `spread` function as in
+/// `package:js/src/varargs.dart`.
+///
+/// Runtime files cannot import packages, which is why we have an ad-hoc copy.
+
+class _Rest {
+  const _Rest();
+}
+
+const _Rest rest = const _Rest();
+
+dynamic spread(args) {
+  throw new StateError(
+      'The spread function cannot be called, '
+      'it should be compiled away.');
 }

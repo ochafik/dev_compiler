@@ -9,7 +9,8 @@ class JavaScriptPrintingOptions {
   final bool shouldCompressOutput;
   final bool minifyLocalVariables;
   final bool preferSemicolonToNewlineInMinifiedOutput;
-
+  final bool shouldEmitTypes;
+  final bool allowSingleLineIfStatements;
 
   /// True to allow keywords in properties, such as `obj.var` or `obj.function`
   /// Modern JS engines support this.
@@ -19,7 +20,9 @@ class JavaScriptPrintingOptions {
       {this.shouldCompressOutput: false,
        this.minifyLocalVariables: false,
        this.preferSemicolonToNewlineInMinifiedOutput: false,
-       this.allowKeywordsInProperties: false});
+       this.shouldEmitTypes: false,
+       this.allowKeywordsInProperties: false,
+       this.allowSingleLineIfStatements: false});
 }
 
 
@@ -50,8 +53,9 @@ class SimpleJavaScriptPrintingContext extends JavaScriptPrintingContext {
   String getText() => buffer.toString();
 }
 
-
-class Printer implements NodeVisitor {
+// TODO(ochafik): Inline the body of [TypeScriptTypePrinter] here if/when it no
+// longer needs to share utils with [ClosureTypePrinter].
+class Printer extends TypeScriptTypePrinter implements NodeVisitor {
   final JavaScriptPrintingOptions options;
   final JavaScriptPrintingContext context;
   final bool shouldCompressOutput;
@@ -68,6 +72,8 @@ class Printer implements NodeVisitor {
   int _indentLevel = 0;
   // A cache of all indentation strings used so far.
   List<String> _indentList = <String>[""];
+  /// Whether the next call to [indent] should just be a no-op.
+  bool _skipNextIndent = false;
 
   static final identifierCharacterRegExp = new RegExp(r'^[a-zA-Z_0-9$]');
   static final expressionContinuationRegExp = new RegExp(r'^[-+([]');
@@ -178,7 +184,16 @@ class Printer implements NodeVisitor {
 
   void outIndent(String str) { indent(); out(str); }
   void outIndentLn(String str) { indent(); outLn(str); }
+
+  void skipNextIndent() {
+    _skipNextIndent = true;
+  }
+
   void indent() {
+    if (_skipNextIndent) {
+      _skipNextIndent = false;
+      return;
+    }
     if (!shouldCompressOutput) {
       out(indentation);
     }
@@ -209,6 +224,9 @@ class Printer implements NodeVisitor {
   }
 
   visitProgram(Program program) {
+    if (program.scriptTag != null) {
+      out('#!${program.scriptTag}\n');
+    }
     visitAll(program.body);
   }
 
@@ -232,7 +250,7 @@ class Printer implements NodeVisitor {
   }
 
   void blockOutWithoutBraces(Node node) {
-    if (node is Block) {
+    if (node is Block && !node.isScope) {
       context.enterNode(node);
       Block block = node;
       block.statements.forEach(blockOutWithoutBraces);
@@ -262,6 +280,7 @@ class Printer implements NodeVisitor {
 
   visitExpressionStatement(ExpressionStatement expressionStatement) {
     indent();
+    outClosureAnnotation(expressionStatement);
     visitNestedExpression(expressionStatement.expression, EXPRESSION,
                           newInForInit: false, newAtStatementBegin: true);
     outSemicolonLn();
@@ -292,8 +311,16 @@ class Printer implements NodeVisitor {
     visitNestedExpression(node.condition, EXPRESSION,
                           newInForInit: false, newAtStatementBegin: false);
     out(")");
-    bool thenWasBlock =
-        blockBody(then, needsSeparation: false, needsNewline: !hasElse);
+    bool thenWasBlock;
+    if (options.allowSingleLineIfStatements && !hasElse && then is! Block) {
+      thenWasBlock = false;
+      spaceOut();
+      skipNextIndent();
+      visit(then);
+    } else {
+      thenWasBlock =
+          blockBody(then, needsSeparation: false, needsNewline: !hasElse);
+    }
     if (hasElse) {
       if (thenWasBlock) {
         spaceOut();
@@ -509,6 +536,7 @@ class Printer implements NodeVisitor {
 
   void functionOut(Fun fun, Node name) {
     out("function");
+    if (fun.isGenerator) out("*");
     if (name != null) {
       out(" ");
       // Name must be a [Decl]. Therefore only test for primary expressions.
@@ -516,12 +544,14 @@ class Printer implements NodeVisitor {
                             newInForInit: false, newAtStatementBegin: false);
     }
     localNamer.enterScope(fun);
+    outTypeParams(fun.typeParams);
     out("(");
     if (fun.params != null) {
       visitCommaSeparated(fun.params, PRIMARY,
                           newInForInit: false, newAtStatementBegin: false);
     }
     out(")");
+    outTypeAnnotation(fun.returnType);
     switch (fun.asyncModifier) {
       case const AsyncModifier.sync():
         break;
@@ -541,16 +571,18 @@ class Printer implements NodeVisitor {
 
   visitFunctionDeclaration(FunctionDeclaration declaration) {
     indent();
+    outClosureAnnotation(declaration);
     functionOut(declaration.function, declaration.name);
     lineOut();
   }
 
   visitNestedExpression(Expression node, int requiredPrecedence,
                         {bool newInForInit, bool newAtStatementBegin}) {
+    int nodePrecedence = node.precedenceLevel;
     bool needsParentheses =
         // a - (b + c).
         (requiredPrecedence != EXPRESSION &&
-         node.precedenceLevel < requiredPrecedence) ||
+         nodePrecedence < requiredPrecedence) ||
         // for (a = (x in o); ... ; ... ) { ... }
         (newInForInit && node is Binary && node.op == "in") ||
         // (function() { ... })().
@@ -573,10 +605,60 @@ class Printer implements NodeVisitor {
   }
 
   visitVariableDeclarationList(VariableDeclarationList list) {
-    out(list.keyword);
-    out(" ");
+    outClosureAnnotation(list);
+    // Note: keyword can be null for non-static field declarations.
+    if (list.keyword != null) {
+      out(list.keyword);
+      out(" ");
+    }
     visitCommaSeparated(list.declarations, ASSIGNMENT,
                         newInForInit: inForInit, newAtStatementBegin: false);
+  }
+
+  visitArrayBindingPattern(ArrayBindingPattern node) {
+    out("[");
+    visitCommaSeparated(node.variables, EXPRESSION,
+                        newInForInit: false, newAtStatementBegin: false);
+    out("]");
+  }
+  visitObjectBindingPattern(ObjectBindingPattern node) {
+    out("{");
+    visitCommaSeparated(node.variables, EXPRESSION,
+                        newInForInit: false, newAtStatementBegin: false);
+    out("}");
+  }
+
+  visitDestructuredVariable(DestructuredVariable node) {
+    var name = node.name;
+    var hasName = name != null;
+    if (hasName) {
+      if (name is LiteralString) {
+        out("[");
+        out(name.value);
+        out("]");
+      } else {
+        visit(name);
+      }
+    }
+    if (node.structure != null) {
+      if (hasName) {
+        out(":");
+        spaceOut();
+      }
+      visit(node.structure);
+    }
+    outTypeAnnotation(node.type);
+    if (node.defaultValue != null) {
+      spaceOut();
+      out("=");
+      spaceOut();
+      visitNestedExpression(node.defaultValue, EXPRESSION,
+                            newInForInit: false, newAtStatementBegin: false);
+    }
+  }
+
+  visitSimpleBindingPattern(SimpleBindingPattern node) {
+    visit(node.name);
   }
 
   visitAssignment(Assignment assignment) {
@@ -596,6 +678,7 @@ class Printer implements NodeVisitor {
   }
 
   visitVariableInitialization(VariableInitialization initialization) {
+    outClosureAnnotation(initialization);
     visitAssignment(initialization);
   }
 
@@ -623,7 +706,7 @@ class Printer implements NodeVisitor {
                           newInForInit: inForInit, newAtStatementBegin: false);
     inNewTarget = false;
     out("(");
-    visitCommaSeparated(node.arguments, ASSIGNMENT,
+    visitCommaSeparated(node.arguments, SPREAD,
                         newInForInit: false, newAtStatementBegin: false);
     out(")");
   }
@@ -633,7 +716,7 @@ class Printer implements NodeVisitor {
                           newInForInit: inForInit,
                           newAtStatementBegin: atStatementBegin);
     out("(");
-    visitCommaSeparated(call.arguments, ASSIGNMENT,
+    visitCommaSeparated(call.arguments, SPREAD,
                         newInForInit: false, newAtStatementBegin: false);
     out(")");
   }
@@ -764,8 +847,18 @@ class Printer implements NodeVisitor {
       default:
         out(op);
     }
-    visitNestedExpression(unary.argument, UNARY,
+    visitNestedExpression(unary.argument, unary.precedenceLevel,
                           newInForInit: inForInit, newAtStatementBegin: false);
+  }
+
+  visitSpread(Spread unary) => visitPrefix(unary);
+
+  visitYield(Yield yield) {
+    out(yield.star ? "yield*" : "yield");
+    if (yield.value == null) return;
+    out(" ");
+    visitNestedExpression(yield.value, yield.precedenceLevel,
+        newInForInit: inForInit, newAtStatementBegin: false);
   }
 
   visitPostfix(Postfix postfix) {
@@ -785,6 +878,12 @@ class Printer implements NodeVisitor {
 
   visitIdentifier(Identifier node) {
     out(localNamer.getName(node));
+    outTypeAnnotation(node.type);
+  }
+
+  visitRestParameter(RestParameter node) {
+    out('...');
+    visitIdentifier(node.parameter);
   }
 
   bool isDigit(int charCode) {
@@ -845,15 +944,17 @@ class Printer implements NodeVisitor {
 
   visitArrowFun(ArrowFun fun) {
     localNamer.enterScope(fun);
-    if (fun.params.length == 1) {
-      visitNestedExpression(fun.params.single, PRIMARY,
+    if (fun.params.length == 1 &&
+        (fun.params.single.type == null || !options.shouldEmitTypes)) {
+      visitNestedExpression(fun.params.single, SPREAD,
           newInForInit: false, newAtStatementBegin: false);
     } else {
       out("(");
-      visitCommaSeparated(fun.params, PRIMARY,
+      visitCommaSeparated(fun.params, SPREAD,
           newInForInit: false, newAtStatementBegin: false);
       out(")");
     }
+    outTypeAnnotation(fun.returnType);
     spaceOut();
     out("=>");
     if (fun.body is Expression) {
@@ -992,9 +1093,23 @@ class Printer implements NodeVisitor {
     lineOut();
   }
 
+  void outTypeParams(Iterable<Identifier> typeParams) {
+    if (typeParams != null && options.shouldEmitTypes && typeParams.isNotEmpty) {
+      out("<");
+      var first = true;
+      for (var typeParam in typeParams) {
+        if (!first) out(", ");
+        first = false;
+        visit(typeParam);
+      }
+      out(">");
+    }
+  }
+
   visitClassExpression(ClassExpression node) {
     out('class ');
     visit(node.name);
+    outTypeParams(node.typeParams);
     if (node.heritage != null) {
       out(' extends ');
       visit(node.heritage);
@@ -1004,6 +1119,14 @@ class Printer implements NodeVisitor {
       out('{');
       lineOut();
       indentMore();
+      if (options.shouldEmitTypes && node.fields != null) {
+        for (var field in node.fields) {
+          indent();
+          visit(field);
+          out(";");
+          lineOut();
+        }
+      }
       for (var method in node.methods) {
         indent();
         visit(method);
@@ -1018,6 +1141,7 @@ class Printer implements NodeVisitor {
   }
 
   visitMethod(Method node) {
+    outClosureAnnotation(node);
     if (node.isStatic) {
       out('static ');
     }
@@ -1025,6 +1149,8 @@ class Printer implements NodeVisitor {
       out('get ');
     } else if (node.isSetter) {
       out('set ');
+    } else if (node.function.isGenerator) {
+      out('*');
     }
     propertyNameOut(node.name, inMethod: true);
 
@@ -1032,7 +1158,7 @@ class Printer implements NodeVisitor {
     localNamer.enterScope(fun);
     out("(");
     if (fun.params != null) {
-      visitCommaSeparated(fun.params, PRIMARY,
+      visitCommaSeparated(fun.params, SPREAD,
           newInForInit: false, newAtStatementBegin: false);
     }
     out(")");
@@ -1044,6 +1170,17 @@ class Printer implements NodeVisitor {
       blockBody(fun.body, needsSeparation: false, needsNewline: false);
     }
     localNamer.leaveScope();
+  }
+
+  void outClosureAnnotation(Node node) {
+    if (node != null && node.closureAnnotation != null) {
+      String comment = node.closureAnnotation.toString(indentation);
+      if (comment.isNotEmpty) {
+        out(comment);
+        lineOut();
+        indent();
+      }
+    }
   }
 
   void propertyNameOut(Expression node, {bool inMethod: false,
@@ -1072,6 +1209,76 @@ class Printer implements NodeVisitor {
         out("]");
       }
     }
+  }
+
+  visitImportDeclaration(ImportDeclaration node) {
+    indent();
+    out('import ');
+    if (node.defaultBinding != null) {
+      visit(node.defaultBinding);
+      if (node.namedImports != null) {
+        out(',');
+        spaceOut();
+      }
+    }
+    nameSpecifierListOut(node.namedImports);
+    fromClauseOut(node.from);
+    outSemicolonLn();
+  }
+
+  visitExportDeclaration(ExportDeclaration node) {
+    indent();
+    out('export ');
+    if (node.isDefault) out('default ');
+    // TODO(jmesserly): we need to avoid indent/newline if this is a statement.
+    visit(node.exported);
+    outSemicolonLn();
+  }
+
+  visitExportClause(ExportClause node) {
+    nameSpecifierListOut(node.exports);
+    fromClauseOut(node.from);
+  }
+
+  nameSpecifierListOut(List<NameSpecifier> names) {
+    if (names == null) return;
+
+    if (names.length == 1 && names[0].name == '*') {
+      visit(names[0]);
+      return;
+    }
+
+    out('{');
+    spaceOut();
+    for (int i = 0; i < names.length; i++) {
+      if (i != 0) {
+        out(',');
+        spaceOut();
+      }
+      visit(names[i]);
+    }
+    spaceOut();
+    out('}');
+  }
+
+  fromClauseOut(LiteralString from) {
+    if (from != null) {
+      out(' from');
+      spaceOut();
+      visit(from);
+    }
+  }
+
+  visitNameSpecifier(NameSpecifier node) {
+    out(node.name);
+    if (node.asName != null) {
+      out(' as ');
+      out(node.asName);
+    }
+  }
+
+  visitModule(Module node) {
+    visitAll(node.body);
   }
 
   visitLiteralExpression(LiteralExpression node) {
@@ -1150,6 +1357,18 @@ class Printer implements NodeVisitor {
   void visitAwait(Await node) {
     out("await ");
     visit(node.expression);
+  }
+
+  void outTypeAnnotation(TypeRef node) {
+    if (node == null || !options.shouldEmitTypes || node.isUnknown) return;
+
+    if (node is OptionalTypeRef) {
+      out("?: ");
+      visit(node.type);
+    } else {
+      out(": ");
+      visit(node);
+    }
   }
 }
 
@@ -1419,12 +1638,33 @@ abstract class VariableDeclarationVisitor<T> extends BaseVisitor<T> {
   declare(Identifier node);
 
   visitFunctionExpression(FunctionExpression node) {
-    for (Identifier param in node.params) declare(param);
+    node.params.forEach(_scanVariableBinding);
     node.body.accept(this);
   }
 
+  _scanVariableBinding(VariableBinding d) {
+    if (d is Identifier) declare(d);
+    else d.accept(this);
+  }
+
+  visitRestParameter(RestParameter node) {
+    _scanVariableBinding(node.parameter);
+    super.visitRestParameter(node);
+  }
+
+  visitDestructuredVariable(DestructuredVariable node) {
+    var name = node.name;
+    if (name is Identifier) _scanVariableBinding(name);
+    super.visitDestructuredVariable(node);
+  }
+
+  visitSimpleBindingPattern(SimpleBindingPattern node) {
+    _scanVariableBinding(node.name);
+    super.visitSimpleBindingPattern(node);
+  }
+
   visitVariableInitialization(VariableInitialization node) {
-    declare(node.declaration);
+    _scanVariableBinding(node.declaration);
     if (node.value != null) node.value.accept(this);
   }
 

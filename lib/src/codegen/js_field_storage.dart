@@ -2,24 +2,24 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-library dev_compiler.src.codegen.js_field_storage;
-
 import 'dart:collection' show HashMap, HashSet;
 import 'package:analyzer/src/generated/ast.dart' show Identifier;
 import 'package:analyzer/src/generated/element.dart';
 
-import 'package:dev_compiler/src/info.dart' show LibraryUnit;
+import '../info.dart' show LibraryUnit;
 
 /// We use a storage slot for fields that override or can be overridden by
 /// getter/setter pairs.
-HashSet<FieldElement> findFieldsNeedingStorage(LibraryUnit library) {
+HashSet<FieldElement> findFieldsNeedingStorage(
+    LibraryUnit library, HashSet<ClassElement> extensionTypes) {
   var overrides = new HashSet<FieldElement>();
   for (var unit in library.partsThenLibrary) {
     for (var cls in unit.element.types) {
       var superclasses = getSuperclasses(cls);
       for (var field in cls.fields) {
         if (!field.isSynthetic && !overrides.contains(field)) {
-          checkForPropertyOverride(field, superclasses, overrides);
+          checkForPropertyOverride(
+              field, superclasses, overrides, extensionTypes);
         }
       }
     }
@@ -28,8 +28,11 @@ HashSet<FieldElement> findFieldsNeedingStorage(LibraryUnit library) {
   return overrides;
 }
 
-void checkForPropertyOverride(FieldElement field,
-    List<ClassElement> superclasses, HashSet<FieldElement> overrides) {
+void checkForPropertyOverride(
+    FieldElement field,
+    List<ClassElement> superclasses,
+    HashSet<FieldElement> overrides,
+    HashSet<ClassElement> extensionTypes) {
   assert(!field.isSynthetic);
 
   var library = field.library;
@@ -41,7 +44,8 @@ void checkForPropertyOverride(FieldElement field,
       // If we find an abstract getter/setter pair, stop the search.
       var getter = superprop.getter;
       var setter = superprop.setter;
-      if ((getter == null || getter.isAbstract) &&
+      if (!extensionTypes.contains(superclass) &&
+          (getter == null || getter.isAbstract) &&
           (setter == null || setter.isAbstract)) {
         break;
       }
@@ -56,7 +60,7 @@ void checkForPropertyOverride(FieldElement field,
   if (found) overrides.add(field);
 }
 
-PropertyInducingElement getProperty(
+FieldElement getProperty(
     ClassElement cls, LibraryElement fromLibrary, String name) {
   // Properties from a different library are not accessible.
   if (Identifier.isPrivateName(name) && cls.library != fromLibrary) {

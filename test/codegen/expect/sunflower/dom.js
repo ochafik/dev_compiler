@@ -1,17 +1,10 @@
-dart.library('dom', window, /* Imports */[
+dart_library.library('sunflower/dom', window, /* Imports */[
+  'dart/_runtime',
   'dart/core'
 ], /* Lazy imports */[
-], function(exports, core) {
+], function(exports, dart, core) {
   'use strict';
-  class JsName extends core.Object {
-    JsName(opts) {
-      let name = opts && 'name' in opts ? opts.name : null;
-      this.name = name;
-    }
-  }
-  dart.setSignature(JsName, {
-    constructors: () => ({JsName: [JsName, [], {name: core.String}]})
-  });
+  let dartx = dart.dartx;
   class Overload extends core.Object {
     Overload() {
     }
@@ -19,10 +12,24 @@ dart.library('dom', window, /* Imports */[
   dart.setSignature(Overload, {
     constructors: () => ({Overload: [Overload, []]})
   });
-  let overload = dart.const(new Overload());
-  let EventListener = dart.typedef('EventListener', () => dart.functionType(dart.void, [Event]));
-  let InputElement = HTMLInputElement;
-  let CanvasElement = HTMLCanvasElement;
+  const overload = dart.const(new Overload());
+  class CustomEvent extends core.Object {}
+  dart.setSignature(CustomEvent, {
+    constructors: () => ({CustomEvent: [CustomEvent, [core.String], {detail: dart.dynamic, bubbles: dart.dynamic, cancelable: dart.dynamic}]})
+  });
+  class HTMLCollection extends core.Object {
+    get(index) {
+      return this["[]"](index);
+    }
+  }
+  dart.setSignature(HTMLCollection, {
+    methods: () => ({get: [Element, [core.num]]})
+  });
+  const EventListener = dart.typedef('EventListener', () => dart.functionType(dart.void, [Event]));
+  const InputElement = HTMLInputElement;
+  const CanvasElement = HTMLCanvasElement;
+  const DivElement = HTMLDivElement;
+  const ScriptElement = HTMLScriptElement;
   class RenderingContext extends core.Object {}
   class CanvasDrawingStyles extends core.Object {
     CanvasDrawingStyles() {
@@ -38,12 +45,15 @@ dart.library('dom', window, /* Imports */[
   }
   class CanvasPathMethods extends core.Object {}
   // Exports:
-  exports.JsName = JsName;
   exports.Overload = Overload;
   exports.overload = overload;
+  exports.CustomEvent = CustomEvent;
+  exports.HTMLCollection = HTMLCollection;
   exports.EventListener = EventListener;
   exports.InputElement = InputElement;
   exports.CanvasElement = CanvasElement;
+  exports.DivElement = DivElement;
+  exports.ScriptElement = ScriptElement;
   exports.RenderingContext = RenderingContext;
   exports.CanvasDrawingStyles = CanvasDrawingStyles;
   exports.CanvasPathMethods = CanvasPathMethods;

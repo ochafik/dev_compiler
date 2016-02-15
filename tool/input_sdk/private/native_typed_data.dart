@@ -10,7 +10,7 @@ library dart.typed_data.implementation;
 
 import 'dart:collection';
 import 'dart:_internal';
-import 'dart:_interceptors' show JSIndexable, JSUInt32, JSUInt31;
+import 'dart:_interceptors' show JSIndexable;
 import 'dart:_js_helper'
 show Creates, JavaScriptIndexingBehavior, JSName, Native, Null, Returns;
 import 'dart:_foreign_helper' show JS;
@@ -21,7 +21,7 @@ import 'dart:typed_data';
 @Native("ArrayBuffer")
 class NativeByteBuffer implements ByteBuffer {
   @JSName('byteLength')
-  final int lengthInBytes;
+  external int get lengthInBytes;
 
   Type get runtimeType => ByteBuffer;
 
@@ -416,7 +416,6 @@ class NativeFloat64x2List
   }
 }
 
-@Native("ArrayBufferView")
 class NativeTypedData implements TypedData {
   /**
    * Returns the byte buffer associated with this object.
@@ -424,32 +423,32 @@ class NativeTypedData implements TypedData {
   @Creates('NativeByteBuffer')
   // May be Null for IE's CanvasPixelArray.
   @Returns('NativeByteBuffer|Null')
-  final ByteBuffer buffer;
+  external ByteBuffer get buffer;
 
   /**
    * Returns the length of this view, in bytes.
    */
   @JSName('byteLength')
-  final int lengthInBytes;
+  external int get lengthInBytes;
 
   /**
    * Returns the offset in bytes into the underlying byte buffer of this view.
    */
   @JSName('byteOffset')
-  final int offsetInBytes;
+  external int get offsetInBytes;
 
   /**
    * Returns the number of bytes in the representation of each element in this
    * list.
    */
   @JSName('BYTES_PER_ELEMENT')
-  final int elementSizeInBytes;
+  external int get elementSizeInBytes;
 
   void _invalidIndex(int index, int length) {
     if (index < 0 || index >= length) {
       if (this is List) {
-        var list = this;  // Typed as dynamic to avoid warning.
-        if (length == list.length) {
+        // Typed as dynamic to avoid warning.
+        if (length == (this as dynamic).length) {
           throw new RangeError.index(index, this);
         }
       }
@@ -649,7 +648,7 @@ class NativeByteData extends NativeTypedData implements ByteData {
       _getUint16(byteOffset, Endianness.LITTLE_ENDIAN == endian);
 
   @JSName('getUint16')
-  @Returns('JSUInt31')
+  @Returns('int')
   int _getUint16(int byteOffset, [bool littleEndian]) native;
 
   /**
@@ -665,7 +664,7 @@ class NativeByteData extends NativeTypedData implements ByteData {
       _getUint32(byteOffset, Endianness.LITTLE_ENDIAN == endian);
 
   @JSName('getUint32')
-  @Returns('JSUInt32')
+  @Returns('int')
   int _getUint32(int byteOffset, [bool littleEndian]) native;
 
   /**
@@ -888,7 +887,7 @@ abstract class NativeTypedArrayOfDouble
     extends NativeTypedArray
         with ListMixin<double>, FixedLengthListMixin<double> {
 
-  int get length => JS('JSUInt32', '#.length', this);
+  int get length => JS('int', '#.length', this);
 
   double operator[](int index) {
     _checkIndex(index, length);
@@ -915,7 +914,7 @@ abstract class NativeTypedArrayOfInt
         with ListMixin<int>, FixedLengthListMixin<int>
     implements List<int> {
 
-  int get length => JS('JSUInt32', '#.length', this);
+  int get length => JS('int', '#.length', this);
 
   // operator[]() is not here since different versions have different return
   // types
@@ -1152,7 +1151,7 @@ class NativeUint16List extends NativeTypedArrayOfInt implements Uint16List {
 
   int operator[](int index) {
     _checkIndex(index, length);
-    return JS('JSUInt31', '#[#]', this, index);
+    return JS('int', '#[#]', this, index);
   }
 
   List<int> sublist(int start, [int end]) {
@@ -1192,7 +1191,7 @@ class NativeUint32List extends NativeTypedArrayOfInt implements Uint32List {
 
   int operator[](int index) {
     _checkIndex(index, length);
-    return JS('JSUInt32', '#[#]', this, index);
+    return JS('int', '#[#]', this, index);
   }
 
   List<int> sublist(int start, [int end]) {
@@ -1232,11 +1231,11 @@ class NativeUint8ClampedList
 
   Type get runtimeType => Uint8ClampedList;
 
-  int get length => JS('JSUInt32', '#.length', this);
+  int get length => JS('int', '#.length', this);
 
   int operator[](int index) {
     _checkIndex(index, length);
-    return JS('JSUInt31', '#[#]', this, index);
+    return JS('int', '#[#]', this, index);
   }
 
   List<int> sublist(int start, [int end]) {
@@ -1280,11 +1279,11 @@ class NativeUint8List extends NativeTypedArrayOfInt implements Uint8List {
 
   Type get runtimeType => Uint8List;
 
-  int get length => JS('JSUInt32', '#.length', this);
+  int get length => JS('int', '#.length', this);
 
   int operator[](int index) {
     _checkIndex(index, length);
-    return JS('JSUInt31', '#[#]', this, index);
+    return JS('int', '#[#]', this, index);
   }
 
   List<int> sublist(int start, [int end]) {

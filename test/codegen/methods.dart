@@ -23,6 +23,9 @@ class A {
     return a + b;
   }
 
+  clashWithObjectProperty({constructor}) => constructor;
+  clashWithJsReservedName({function}) => function;
+
   int get a => x();
 
   void set b(int b) {}
@@ -55,4 +58,12 @@ test() {
   // Dynamic Tear-off
   dynamic aa = new A();
   var h = aa.x;
+
+  // Tear-off of object methods
+  var ts = a.toString;
+  var nsm = a.noSuchMethod;
+
+  // Tear-off extension methods
+  var c = "".padLeft;
+  var r = (3.0).floor;
 }

@@ -2,8 +2,6 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-library dev_compiler.src.multi_package_resolver;
-
 import 'dart:io';
 
 import 'package:analyzer/src/generated/java_io.dart';
@@ -19,14 +17,18 @@ class MultiPackageResolver extends UriResolver {
   MultiPackageResolver(this.searchPaths);
 
   @override
-  Source resolveAbsolute(Uri uri) {
-    var path = _expandPath(uri);
-    if (path == null) return null;
+  Source resolveAbsolute(Uri uri, [Uri actualUri]) {
+    var candidates = _expandPath(uri);
+    if (candidates == null) return null;
 
-    var resolvedPath = _resolve(path);
-    if (resolvedPath == null) return null;
-
-    return new FileBasedSource.con2(uri, new JavaFile(resolvedPath));
+    for (var path in candidates) {
+      var resolvedPath = _resolve(path);
+      if (resolvedPath != null) {
+        return new FileBasedSource(
+            new JavaFile(resolvedPath), actualUri != null ? actualUri : uri);
+      }
+    }
+    return null;
   }
 
   /// Resolve [path] by looking at each prefix in [searchPaths] and returning
@@ -40,12 +42,12 @@ class MultiPackageResolver extends UriResolver {
   }
 
   /// Expand `uri.path`, replacing dots in the package name with slashes.
-  String _expandPath(Uri uri) {
+  List<String> _expandPath(Uri uri) {
     if (uri.scheme != 'package') return null;
     var path = uri.path;
     var slashPos = path.indexOf('/');
     var packagePath = path.substring(0, slashPos).replaceAll(".", "/");
     var filePath = path.substring(slashPos + 1);
-    return '${packagePath}/lib/${filePath}';
+    return ['$packagePath/lib/$filePath', '$packagePath/$filePath'];
   }
 }

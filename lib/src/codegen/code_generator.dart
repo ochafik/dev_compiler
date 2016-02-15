@@ -2,42 +2,30 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-library dev_compiler.src.codegen.code_generator;
-
-import 'dart:io';
-
-import 'package:analyzer/src/generated/ast.dart' show CompilationUnit;
 import 'package:analyzer/src/generated/element.dart'
     show CompilationUnitElement, LibraryElement;
 import 'package:analyzer/src/generated/engine.dart' show AnalysisContext;
 import 'package:path/path.dart' as path;
 
-import 'package:dev_compiler/devc.dart' show AbstractCompiler;
-import 'package:dev_compiler/src/info.dart';
-import 'package:dev_compiler/src/utils.dart' show canonicalLibraryName;
-import 'package:dev_compiler/src/checker/rules.dart';
-import 'package:dev_compiler/src/options.dart';
+import '../compiler.dart' show AbstractCompiler;
+import '../info.dart';
+import '../utils.dart' show canonicalLibraryName;
+import '../options.dart' show CodegenOptions;
 
 abstract class CodeGenerator {
   final AbstractCompiler compiler;
-  final String outDir;
-  final Uri root;
-  final TypeRules rules;
   final AnalysisContext context;
-  final CompilerOptions options;
+  final CodegenOptions options;
 
   CodeGenerator(AbstractCompiler compiler)
       : compiler = compiler,
-        outDir = path.absolute(compiler.options.outputDir),
-        root = compiler.entryPointUri,
-        rules = compiler.rules,
         context = compiler.context,
-        options = compiler.options;
+        options = compiler.options.codegenOptions;
 
   /// Return a hash, if any, that can be used for caching purposes. When two
   /// invocations to this function return the same hash, the underlying
   /// code-generator generated the same code.
-  String generateLibrary(LibraryUnit unit, LibraryInfo info);
+  String generateLibrary(LibraryUnit unit);
 
   static List<String> _searchPaths = () {
     // TODO(vsm): Can we remove redundancy with multi_package_resolver logic?
@@ -58,7 +46,7 @@ abstract class CodeGenerator {
     // below.
     list.sort((s1, s2) => s2.length - s1.length);
     return list;
-  }();
+  }() as List<String>;
 
   static String _dirToPrefix(String dir) {
     dir = path.absolute(dir);
@@ -112,16 +100,6 @@ abstract class CodeGenerator {
     assert(suffix != null);
     assert(path.isRelative(suffix));
     return _convertIfPackage(suffix);
-  }
-
-  String makeOutputDirectory(LibraryInfo info, CompilationUnit unit) {
-    var suffix = _getOutputDirectory(info.name, unit.element);
-    var fileDir = path.join(outDir, suffix);
-    var dir = new Directory(fileDir);
-    if (!dir.existsSync()) {
-      dir.createSync(recursive: true);
-    }
-    return fileDir;
   }
 
   static Uri uriFor(LibraryElement lib) {

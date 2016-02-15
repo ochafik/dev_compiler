@@ -3,8 +3,10 @@
 // BSD-style license that can be found in the LICENSE file.
 
 var assert = chai.assert;
-var core = dart.import('dart/core');
-var collection = dart.import('dart/collection');
+var core = dart_library.import('dart/core');
+var collection = dart_library.import('dart/collection');
+var dart = dart_library.import('dart/_runtime');
+var dartx = dart.dartx;
 
 suite('generic', () => {
   "use strict";
@@ -13,6 +15,28 @@ suite('generic', () => {
 
   test('zero arguments is not allowed', () => {
     assert.throws(() => { generic(function(){}); });
+  });
+
+  test('dcall noSuchMethod has correct error target', () => {
+    assert.throws(() => dart.dcall(42),
+        new RegExp('NoSuchMethodError.*\nReceiver: 42', 'm'),
+        'Calls with non-function receiver should throw a NoSuchMethodError' +
+        ' with correct target');
+
+    // TODO(jmesserly): we should show the name "print" in there somewhere.
+    assert.throws(() => dart.dcall(core.print, 1, 2, 3),
+        new RegExp('NoSuchMethodError.*\n' +
+        "Receiver: Instance of '\\(Object\\) -> void'", 'm'),
+        'Calls with incorrect argument types should throw a NoSuchMethodError' +
+        ' with correct target');
+  });
+
+  test('can throw number', () => {
+    try {
+      dart.throw(42);
+    } catch (e) {
+      assert.equal(e, 42);
+    }
   });
 
   test('argument count cannot change', () => {
@@ -71,8 +95,8 @@ suite('generic', () => {
   test('type constructor is reflectable', () => {
     let SomeType = generic(function(x, y) { return Object.create(null); });
     let someValue = SomeType('hi', 123);
-    assert.equal(someValue[dart.originalDeclaration], SomeType);
-    assert.deepEqual(someValue[dart.typeArguments], ['hi', 123]);
+    assert.equal(dart.getGenericClass(someValue), SomeType);
+    assert.deepEqual(dart.getGenericArgs(someValue), ['hi', 123]);
   });
 
   test('proper type constructor is called', () => {
@@ -93,6 +117,7 @@ suite('instanceOf', () => {
   let intIsNonNullable = false;
   let cast = dart.as;
   let instanceOf = dart.is;
+  let strongInstanceOf = dart.strongInstanceOf;
   let runtimeType = dart.realRuntimeType;
   let functionType = dart.functionType;
   let typedef = dart.typedef;
@@ -174,9 +199,15 @@ suite('instanceOf', () => {
   let cls8 =
     dart.fn((b, s, o) => { return null; }, B, [B, String], {p: Object});
 
-  function checkType(x, type, expectedTrue) {
+  function checkType(x, type, expectedTrue, strongOnly) {
     if (expectedTrue === undefined) expectedTrue = true;
-    expect(instanceOf(x, type), expectedTrue);
+    if (strongOnly == undefined) strongOnly = false;
+    if (!strongOnly) {
+      expect(instanceOf(x, type), expectedTrue);
+    } else {
+      assert.throws(() => instanceOf(x, type), dart.StrongModeError);
+      expect(strongInstanceOf(x, type), expectedTrue);
+    }
   }
 
   test('int', () => {
@@ -242,6 +273,8 @@ suite('instanceOf', () => {
     let m3 = new Map();
     let m4 = new (collection.HashMap$(dart.dynamic, dart.dynamic))();
     let m5 = new collection.LinkedHashMap();
+    let m6 = new (Map$(String, dart.dynamic))();
+
 
     expect(isGroundType(Map), true);
     expect(isGroundType(runtimeType(m1)), false);
@@ -269,8 +302,8 @@ suite('instanceOf', () => {
     checkType(m1, Map$(Object, Object));
 
     // No contravariance on generics.
-    checkType(m2, runtimeType(m1), false);
-    checkType(m2, Map$(String, String), false);
+    checkType(m2, runtimeType(m1), false, true);
+    checkType(m2, Map$(String, String), false, true);
 
     // null is! Map
     checkType(null, Map, false);
@@ -278,6 +311,26 @@ suite('instanceOf', () => {
     // Raw generic types
     checkType(m5, Map);
     checkType(m4, Map);
+
+    // Is checks
+    assert.throws(() => dart.is(m3, Map$(String, String)),
+      dart.StrongModeError);
+    assert.throws(() => dart.is(m6, Map$(String, String)),
+      dart.StrongModeError);
+    assert.isTrue(dart.is(m1, Map$(String, String)));
+    assert.throws(() => dart.is(m2, Map$(String, String)),
+      dart.StrongModeError);
+
+    // As checks
+    // TODO(vsm): Enable these.  We're currently only logging warnings on
+    // StrongModeErrors.
+    // assert.throws(() => dart.as(m3, Map$(String, String)),
+    //   dart.StrongModeError);
+    // assert.throws(() => dart.as(m6, Map$(String, String)),
+    //   dart.StrongModeError);
+    assert.equal(dart.as(m1, Map$(String, String)), m1);
+    // assert.throws(() => dart.as(m2, Map$(String, String)),
+    //   dart.StrongModeError);
   });
 
   test('constructors', () => {
@@ -324,20 +377,20 @@ suite('instanceOf', () => {
     expect(isGroundType(BB$(String, List)), false);
     expect(isGroundType(cctype), true);
     expect(isGroundType(CC), true);
-    checkType(cc, aatype, false);
-    checkType(cc, AA$(String, List), false);
+    checkType(cc, aatype, false, true);
+    checkType(cc, AA$(String, List), false, true);
     checkType(cc, bbtype);
     checkType(cc, BB$(String, List));
     checkType(aa, cctype, false);
     checkType(aa, CC, false);
-    checkType(aa, bbtype, false);
-    checkType(aa, BB$(String, List), false);
+    checkType(aa, bbtype, false, true);
+    checkType(aa, BB$(String, List), false, true);
     checkType(bb, cctype, false);
     checkType(bb, CC, false);
     checkType(aa, aabadtype);
     checkType(aa, dynamic);
-    checkType(aabad, aatype, false);
-    checkType(aabad, AA$(String, List), false);
+    checkType(aabad, aatype, false, true);
+    checkType(aabad, AA$(String, List), false, true);
     checkType(aabad, aarawtype);
     checkType(aabad, AA);
     checkType(aaraw, aabadtype);
@@ -358,12 +411,30 @@ suite('instanceOf', () => {
 
     checkType(s1, c.IterableMixin);
     checkType(s1, c.IterableMixin$(String));
-    checkType(s1, c.IterableMixin$(int), false);
+    checkType(s1, c.IterableMixin$(int), false, true);
 
     checkType(s1, c.SetMixin);
     checkType(s1, c.SetMixin$(String));
-    checkType(s1, c.SetMixin$(int), false);
+    checkType(s1, c.SetMixin$(int), false, true);
   });
+
+  test('Type', () => {
+    checkType(int, core.Type, true);
+    checkType(num, core.Type, true);
+    checkType(bool, core.Type, true);
+    checkType(String, core.Type, true);
+    checkType(dynamic, core.Type, true);
+    checkType(Object, core.Type, true);
+    checkType(List, core.Type, true);
+    checkType(Map, core.Type, true);
+    checkType(Map$(int, String), core.Type, true);
+    checkType(Func2, core.Type, true);
+    checkType(functionType(dynamic, [dynamic]), core.Type, true);
+    checkType(core.Type, core.Type, true);
+
+    checkType(3, core.Type, false);
+    checkType("hello", core.Type, false);
+  })
 
   test('Functions', () => {
     // - return type: Dart is bivariant.  We're covariant.
@@ -371,31 +442,30 @@ suite('instanceOf', () => {
     expect(isGroundType(Func2), true);
     expect(isGroundType(Foo), false);
     expect(isGroundType(functionType(B, [B, String])), false);
-    checkType(bar1, Foo, false);
-    checkType(cls1, Foo, false);
-    checkType(bar1, functionType(B, [B, String]), false);
-    checkType(cls1, functionType(B, [B, String]), false);
-    checkType(bar2, Foo, false);
-    checkType(cls2, Foo, false);
-    checkType(bar2, functionType(B, [B, String]), false);
-    checkType(cls2, functionType(B, [B, String]), false);
+    checkType(bar1, Foo, false, true);
+    checkType(cls1, Foo, false, true);
+    checkType(bar1, functionType(B, [B, String]), false, true);
+    checkType(cls1, functionType(B, [B, String]), false, true);
+    checkType(bar2, Foo, false, true);
+    checkType(cls2, Foo, false, true);
+    checkType(bar2, functionType(B, [B, String]), false, true);
+    checkType(cls2, functionType(B, [B, String]), false, true);
     checkType(bar3, Foo);
     checkType(cls3, Foo);
     checkType(bar3, functionType(B, [B, String]));
     checkType(cls3, functionType(B, [B, String]));
-    checkType(bar4, Foo, false);
-    checkType(cls4, Foo, false);
-    // TODO(vsm): Revisit.  bar4 is (B, *) -> B.  Perhaps it should be treated as top for a reified object.
-    checkType(bar4, functionType(B, [B, String]), false);
-    checkType(cls4, functionType(B, [B, String]), false);
+    checkType(bar4, Foo, true);
+    checkType(cls4, Foo, true);
+    checkType(bar4, functionType(B, [B, String]), true);
+    checkType(cls4, functionType(B, [B, String]), true);
     checkType(bar5, Foo);
     checkType(cls5, Foo);
     checkType(bar5, functionType(B, [B, String]));
     checkType(cls5, functionType(B, [B, String]));
-    checkType(bar6, Foo, false);
-    checkType(cls6, Foo, false);
-    checkType(bar6, functionType(B, [B, String]), false);
-    checkType(cls6, functionType(B, [B, String]), false);
+    checkType(bar6, Foo, false, true);
+    checkType(cls6, Foo, false, true);
+    checkType(bar6, functionType(B, [B, String]), false, true);
+    checkType(cls6, functionType(B, [B, String]), false, true);
     checkType(bar7, Foo);
     checkType(cls7, Foo);
     checkType(bar7, functionType(B, [B, String]));
@@ -406,18 +476,18 @@ suite('instanceOf', () => {
     checkType(cls8, Foo);
     checkType(bar8, functionType(B, [B, String]));
     checkType(cls8, functionType(B, [B, String]));
-    checkType(bar8, runtimeType(bar6), false);
-    checkType(cls8, runtimeType(bar6), false);
-    checkType(bar7, runtimeType(bar8), false);
-    checkType(cls7, runtimeType(bar8), false);
-    checkType(bar8, runtimeType(bar7), false);
-    checkType(cls8, runtimeType(bar7), false);
+    checkType(bar8, runtimeType(bar6), false, true);
+    checkType(cls8, runtimeType(bar6), false, true);
+    checkType(bar7, runtimeType(bar8), false, true);
+    checkType(cls7, runtimeType(bar8), false, true);
+    checkType(bar8, runtimeType(bar7), false, true);
+    checkType(cls8, runtimeType(bar7), false, true);
 
     // Parameterized typedefs
     expect(isGroundType(FuncG), true);
     expect(isGroundType(FuncG$(B, String)), false);
-    checkType(bar1, FuncG$(B, String), false);
-    checkType(cls1, FuncG$(B, String), false);
+    checkType(bar1, FuncG$(B, String), false, true);
+    checkType(cls1, FuncG$(B, String), false, true);
     checkType(bar3, FuncG$(B, String));
     checkType(cls3, FuncG$(B, String));
   });
@@ -552,9 +622,9 @@ suite('instanceOf', () => {
                                                   core.int]));
     checkType(ii_2i, dart.functionType(core.int, [], [core.int,
                                                       core.int]),
-              false);
+              false, true);
     checkType(ii_2i, dart.functionType(core.int, [core.int],
-                                       {extra: core.int}), false);
+                                       {extra: core.int}), false, true);
 
     // Named types
     function i_i2i(x, opts) {return x};
@@ -562,13 +632,13 @@ suite('instanceOf', () => {
     checkType(i_i2i, dart.functionType(core.int, [core.int],
                                        {extra: core.int}));
     checkType(i_i2i, dart.functionType(core.int,
-                                       [core.int, core.int]), false);
+                                       [core.int, core.int]), false, true);
     checkType(i_i2i, dart.functionType(core.int, [core.int], {}));
     checkType(i_i2i,
         dart.functionType(core.int, [], {extra: core.int,
-                                         also: core.int}), false);
+                                         also: core.int}), false, true);
     checkType(i_i2i,
-        dart.functionType(core.int, [core.int], [core.int]), false);
+        dart.functionType(core.int, [core.int], [core.int]), false, true);
   });
 
   test('Method tearoffs', () => {
@@ -578,7 +648,7 @@ suite('instanceOf', () => {
     checkType(dart.bind(map, 'toString'),
         dart.functionType(String, []));
     checkType(dart.bind(map, 'toString'),
-        dart.functionType(int, []), false);
+        dart.functionType(int, []), false, true);
 
     // Tear off of a method directly on the object
     let smap = new (c.SplayTreeMap$(core.int, core.String))();
@@ -588,7 +658,7 @@ suite('instanceOf', () => {
     checkType(dart.bind(smap, 'forEach'),
         dart.functionType(dart.void,
             [dart.functionType(dart.void,
-                [core.String, core.String])]), false);
+                [core.String, core.String])]), false, true);
 
     // Tear off of a mixed in method
     let mapB = new (c.MapBase$(core.int, core.int))();
@@ -598,20 +668,30 @@ suite('instanceOf', () => {
     checkType(dart.bind(mapB, 'forEach'),
         dart.functionType(dart.void, [
             dart.functionType(dart.void, [core.int, core.String])]),
-              false);
+              false, true);
 
     // Tear off of a method with a symbol name
     let listB = new (c.ListBase$(core.int))();
     checkType(dart.bind(listB, dartx.add),
               dart.functionType(dart.void, [core.int]));
     checkType(dart.bind(listB, dartx.add),
-              dart.functionType(dart.void, [core.String]), false);
+              dart.functionType(dart.void, [core.String]), false, true);
 
     // Tear off of a static method
     checkType(c.ListBase.listToString,
               dart.functionType(core.String, [core.List]));
     checkType(c.ListBase.listToString,
-              dart.functionType(core.String, [core.String]), false);
+              dart.functionType(core.String, [core.String]), false, true);
+
+    // Tear-off of extension methods on primitives
+    checkType(dart.bind(3.0, dartx.floor),
+              dart.functionType(core.int, []));
+    checkType(dart.bind(3.0, dartx.floor),
+              dart.functionType(core.String, []), false, true);
+    checkType(dart.bind("", dartx.endsWith),
+              dart.functionType(core.bool, [core.String]));
+    checkType(dart.bind("", dartx.endsWith),
+              dart.functionType(core.bool, [core.int]), false, true);
 
     // Tear off a mixin method
     class Base {
@@ -648,7 +728,7 @@ suite('instanceOf', () => {
     var obj = new O();
     var m = dart.bind(obj, 'm');
     checkType(m, dart.functionType(core.Object, [core.int]));
-    checkType(m, dart.functionType(core.int, [core.int]), false);
+    checkType(m, dart.functionType(core.int, [core.int]), false, true);
 
     // Test inherited signatures
     class P extends O {
@@ -659,7 +739,7 @@ suite('instanceOf', () => {
     var obj = new P();
     var m = dart.bind(obj, 'm');
     checkType(m, dart.functionType(core.Object, [core.int]));
-    checkType(m, dart.functionType(core.int, [core.int]), false);
+    checkType(m, dart.functionType(core.int, [core.int]), false, true);
   });
 
   test('Object members', () => {

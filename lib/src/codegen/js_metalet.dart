@@ -2,11 +2,9 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-library dev_compiler.src.codegen.js_metalet;
-
 // TODO(jmesserly): import from its own package
-import 'package:dev_compiler/src/js/js_ast.dart';
-import 'package:dev_compiler/src/js/precedence.dart';
+import '../js/js_ast.dart';
+import '../js/precedence.dart';
 
 import 'js_names.dart' show TemporaryId;
 
@@ -18,7 +16,7 @@ import 'js_names.dart' show TemporaryId;
 ///     (let* (x1=expr1, x2=expr2, t=x1[x2]) { x1[x2] = t + 1; t })
 ///
 /// [MetaLet] will simplify itself automatically when [toExpression],
-/// [toStatement], or [toReturn] is called.
+/// [toStatement], [toReturn], or [toYieldStatement] is called.
 ///
 /// * variables used once will be inlined.
 /// * if used in a statement context they can emit as blocks.
@@ -41,7 +39,7 @@ class MetaLet extends Expression {
   final Map<String, Expression> variables;
 
   /// A list of expressions in the body.
-  /// Conceptually this is like a comma expression: the last value is returned.
+  /// The last value should represent the returned value.
   final List<Expression> body;
 
   /// True if the final expression in [body] can be skipped in [toStatement].
@@ -64,7 +62,8 @@ class MetaLet extends Expression {
       ExpressionStatement es = s.first;
       return es.expression;
     }
-    return new Call(new ArrowFun([], block), []);
+
+    return _toInvokedFunction(block);
   }
 
   Expression toAssignExpression(Expression left) {
@@ -94,8 +93,7 @@ class MetaLet extends Expression {
       return _expression = es.value;
     }
     // Wrap it in an immediately called function to get in expression context.
-    // TODO(jmesserly):
-    return _expression = new Call(new ArrowFun([], block), []);
+    return _expression = _toInvokedFunction(block);
   }
 
   Block toStatement() {
@@ -112,18 +110,69 @@ class MetaLet extends Expression {
     return _finishStatement(statements);
   }
 
-  accept(NodeVisitor visitor) => toExpression().accept(visitor);
+  Block toYieldStatement({bool star: false}) {
+    var statements = body
+        .map((e) =>
+            e == body.last ? e.toYieldStatement(star: star) : e.toStatement())
+        .toList();
+    return _finishStatement(statements);
+  }
+
+  accept(NodeVisitor visitor) {
+    // TODO(jmesserly): we special case vistors from js_ast.Template, because it
+    // doesn't know about MetaLet. Should we integrate directly?
+    if (visitor is InstantiatorGeneratorVisitor) {
+      return _templateVisitMetaLet(visitor);
+    } else if (visitor is InterpolatedNodeAnalysis) {
+      return visitor.visitNode(this);
+    } else {
+      return toExpression().accept(visitor);
+    }
+  }
 
   void visitChildren(NodeVisitor visitor) {
-    toExpression().visitChildren(visitor);
+    // TODO(jmesserly): we special case vistors from js_ast.Template, because it
+    // doesn't know about MetaLet. Should we integrate directly?
+    if (visitor is InterpolatedNodeAnalysis ||
+        visitor is InstantiatorGeneratorVisitor) {
+      variables.values.forEach((v) => v.accept(visitor));
+      body.forEach((v) => v.accept(visitor));
+    } else {
+      toExpression().visitChildren(visitor);
+    }
   }
 
   /// This generates as either a comma expression or a call.
   int get precedenceLevel => variables.isEmpty ? EXPRESSION : CALL;
 
+  /// Patch to pretend [Template] supports visitMetaLet.
+  Instantiator _templateVisitMetaLet(InstantiatorGeneratorVisitor visitor) {
+    var valueInstantiators = variables.values.map(visitor.visit);
+    var bodyInstantiators = body.map(visitor.visit);
+
+    return (args) => new MetaLet(
+        new Map.fromIterables(
+            variables.keys, valueInstantiators.map((i) => i(args))),
+        bodyInstantiators.map((i) => i(args)).toList(),
+        statelessResult: statelessResult);
+  }
+
+  Expression _toInvokedFunction(Statement block) {
+    var finder = new _YieldFinder();
+    block.accept(finder);
+    if (!finder.hasYield) {
+      return new Call(new ArrowFun([], block), []);
+    }
+    // If we have a yield, it's more tricky. We'll create a `function*`, which
+    // we `yield*` to immediately invoke. We also may need to bind this:
+    Expression fn = new Fun([], block, isGenerator: true);
+    if (finder.hasThis) fn = js.call('#.bind(this)', fn);
+    return new Yield(new Call(fn, []), star: true);
+  }
+
   Block _finishStatement(List<Statement> statements) {
-    var params = [];
-    var values = [];
+    var params = <TemporaryId>[];
+    var values = <Expression>[];
     var block = _build(params, values, new Block(statements));
     if (params.isEmpty) return block;
 
@@ -188,7 +237,10 @@ class MetaLet extends Expression {
     String name = last.nameOrPosition;
     if (!variables.containsKey(name)) return null;
 
-    // Variables declared can't be used inside their initializer.
+    // Variables declared can't be used inside their initializer, so make
+    // sure we don't transform an assignment into an initializer.
+    // If this already was a declaration, then we know it's legal, so we can
+    // skip the check.
     if (!isDeclaration) {
       var finder = new _IdentFinder(left.name);
       for (var expr in body) {
@@ -222,7 +274,7 @@ class MetaLet extends Expression {
 
 class _VariableUseCounter extends BaseVisitor {
   final counts = <String, int>{};
-  visitInterpolatedExpression(InterpolatedExpression node) {
+  @override visitInterpolatedExpression(InterpolatedExpression node) {
     int n = counts[node.nameOrPosition];
     counts[node.nameOrPosition] = n == null ? 1 : n + 1;
   }
@@ -233,10 +285,35 @@ class _IdentFinder extends BaseVisitor {
   bool found = false;
   _IdentFinder(this.name);
 
-  visitIdentifier(Identifier node) {
+  @override visitIdentifier(Identifier node) {
     if (node.name == name) found = true;
   }
-  visitNode(Node node) {
+
+  @override visitNode(Node node) {
     if (!found) super.visitNode(node);
+  }
+}
+
+class _YieldFinder extends BaseVisitor {
+  bool hasYield = false;
+  bool hasThis = false;
+  bool _nestedFunction = false;
+  @override visitThis(This node) {
+    hasThis = true;
+  }
+
+  @override visitFunctionExpression(FunctionExpression node) {
+    var savedNested = _nestedFunction;
+    _nestedFunction = true;
+    super.visitFunctionExpression(node);
+    _nestedFunction = savedNested;
+  }
+
+  @override visitYield(Yield node) {
+    if (!_nestedFunction) hasYield = true;
+  }
+
+  @override visitNode(Node node) {
+    if (!hasYield) super.visitNode(node);
   }
 }

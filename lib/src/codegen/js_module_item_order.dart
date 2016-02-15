@@ -3,16 +3,17 @@
 // BSD-style license that can be found in the LICENSE file.
 
 import 'dart:collection' show HashMap;
+
 import 'package:analyzer/src/generated/ast.dart';
 import 'package:analyzer/src/generated/element.dart';
-import 'package:dev_compiler/src/dependency_graph.dart' show corelibOrder;
+
+import '../compiler.dart' show corelibOrder;
 
 typedef void ModuleItemEmitter(AstNode item);
 
 /// Helper that tracks order of elements visited by the compiler, detecting
 /// if the top level item can be loaded eagerly or not.
 class ModuleItemLoadOrder {
-
   /// The order that elements should be emitted in, with a bit indicating if
   /// the element should be generated lazily. The value will be `false` if
   /// the item could not be loaded, and needs to be made lazy.
@@ -40,6 +41,8 @@ class ModuleItemLoadOrder {
   /// Memoized results of [_inLibraryCycle].
   final _libraryCycleMemo = new HashMap<LibraryElement, bool>();
 
+  bool _checkReferences;
+
   final ModuleItemEmitter _emitModuleItem;
 
   LibraryElement _currentLibrary;
@@ -49,6 +52,9 @@ class ModuleItemLoadOrder {
   bool isLoaded(Element e) => (e.library == _currentLibrary)
       ? _loaded[e] == true
       : libraryIsLoaded(e.library);
+
+  /// True if the element is currently being loaded.
+  bool _isLoading(Element e) => _currentElements.contains(e);
 
   /// Collect top-level elements and nodes we need to emit.
   void collectElements(
@@ -60,13 +66,7 @@ class ModuleItemLoadOrder {
       for (var decl in unit.declarations) {
         _declarationNodes[decl.element] = decl;
 
-        if (decl is ClassDeclaration) {
-          for (var member in decl.members) {
-            if (member is FieldDeclaration && member.isStatic) {
-              _collectElementsForVariable(member.fields);
-            }
-          }
-        } else if (decl is TopLevelVariableDeclaration) {
+        if (decl is TopLevelVariableDeclaration) {
           _collectElementsForVariable(decl.variables);
         }
       }
@@ -84,8 +84,6 @@ class ModuleItemLoadOrder {
   /// before this one, until [finishElement] is called.
   void startTopLevel(Element e) {
     assert(isCurrentElement(e));
-    // Assume loading will succeed until proven otherwise.
-    _loaded[e] = true;
     _topLevelElements.add(e);
   }
 
@@ -93,6 +91,26 @@ class ModuleItemLoadOrder {
   void finishTopLevel(Element e) {
     var last = _topLevelElements.removeLast();
     assert(identical(e, last));
+  }
+
+  /// Starts recording calls to [declareBeforeUse], until
+  /// [finishCheckingReferences] is called.
+  void startCheckingReferences() {
+    // This function should not be reentrant, and we should not current be
+    // emitting top-level code.
+    assert(_checkReferences == null);
+    assert(
+        _topLevelElements.isEmpty || !isCurrentElement(_topLevelElements.last));
+    // Assume true until proven otherwise
+    _checkReferences = true;
+  }
+
+  /// Finishes recording references, and returns `true` if all referenced
+  /// items were loaded (or if no items were referenced).
+  bool finishCheckingReferences() {
+    var result = _checkReferences;
+    _checkReferences = null;
+    return result;
   }
 
   // Starts generating code for the declaration element [e].
@@ -145,8 +163,17 @@ class ModuleItemLoadOrder {
   /// declarations are assumed to be available before we start execution.
   /// See [startTopLevel].
   void declareBeforeUse(Element e) {
-    if (e == null || _topLevelElements.isEmpty) return;
-    if (!isCurrentElement(_topLevelElements.last)) return;
+    if (e == null) return;
+
+    if (_checkReferences != null) {
+      _checkReferences = _checkReferences && isLoaded(e) && !_isLoading(e);
+      return;
+    }
+
+    if (_topLevelElements.isEmpty ||
+        !isCurrentElement(_topLevelElements.last)) {
+      return;
+    }
 
     // If the item is from our library, try to emit it now.
     bool loaded;
@@ -181,16 +208,19 @@ class ModuleItemLoadOrder {
   bool libraryIsLoaded(LibraryElement library) {
     assert(library != _currentLibrary);
 
+    // DynamicElementImpl has no library.
+    if (library == null) return true;
+
     // The SDK is a special case: we optimize the order to prevent laziness.
-    if (library.isInSdk) {
+    if (_isDartUri(library)) {
       // SDK is loaded before non-SDK libraries
-      if (!_currentLibrary.isInSdk) return true;
+      if (!_isDartUri(_currentLibrary)) return true;
 
       // Compute the order of both SDK libraries. If unknown, assume it's after.
-      var order = corelibOrder.indexOf(library.name);
+      var order = corelibOrder.indexOf(library.source.uri);
       if (order == -1) order = corelibOrder.length;
 
-      var currentOrder = corelibOrder.indexOf(_currentLibrary.name);
+      var currentOrder = corelibOrder.indexOf(_currentLibrary.source.uri);
       if (currentOrder == -1) currentOrder = corelibOrder.length;
 
       // If the dart:* library we are currently compiling is loaded after the
@@ -209,7 +239,7 @@ class ModuleItemLoadOrder {
   bool _inLibraryCycle(LibraryElement library) {
     // SDK libs don't depend on things outside the SDK.
     // (We can reach this via the recursive call below.)
-    if (library.isInSdk && !_currentLibrary.isInSdk) return false;
+    if (_isDartUri(library) && !_isDartUri(_currentLibrary)) return false;
 
     var result = _libraryCycleMemo[library];
     if (result != null) return result;
@@ -226,4 +256,10 @@ class ModuleItemLoadOrder {
     }
     return _libraryCycleMemo[library] = result;
   }
+
+  /// Returns whether this is a library imported with 'dart:' URI.
+  ///
+  /// This is similar to [LibraryElement.isInSdk], but checking the URI instead
+  /// of the library naming convention, because the URI is reliable.
+  static bool _isDartUri(LibraryElement e) => e.source.uri.scheme == 'dart';
 }

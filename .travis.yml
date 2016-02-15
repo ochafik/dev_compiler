@@ -1,10 +1,19 @@
 language: dart
-sudo: false
 dart:
   - dev
-  - stable
+cache:
+  directories:
+    - $HOME/.npm
+    - $HOME/.nvm
+    - $HOME/.pub-cache/hosted
+    - node_modules
 before_install:
   - pub global activate dart_coveralls
+  - export CHROME_CANARY_BIN=`./tool/get_chrome_canary.sh`
+  - export DISPLAY=:99.0
+  - sh -e /etc/init.d/xvfb start
+before_script:
+  - nvm install 5.5.0
+  - npm install
 script:
-  - ./tool/presubmit.sh
-  - ./tool/coverage.sh
+  - ./tool/presubmit.sh && ./tool/coverage.sh

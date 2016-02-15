@@ -2,7 +2,7 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-part of _js_helper;
+part of dart._js_helper;
 
 /// Tells the optimizing compiler that the annotated method cannot throw.
 /// Requires @NoInline() to function correctly.
@@ -19,17 +19,6 @@ class NoInline {
 class Native {
   final String name;
   const Native(this.name);
-}
-
-// TODO(jmesserly): move these somewhere else, e.g. package:js or dart:js
-
-class JsName {
-  /// The JavaScript name.
-  /// Used for classes and libraries.
-  /// Note that this could be an expression, e.g. `lib.TypeName` in JS, but it
-  /// should be kept simple, as it will be generated directly into the code.
-  final String name;
-  const JsName({this.name});
 }
 
 class JsPeerInterface {

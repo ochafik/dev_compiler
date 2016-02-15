@@ -1,9 +1,11 @@
-dart.library('methods', null, /* Imports */[
+dart_library.library('methods', null, /* Imports */[
+  'dart/_runtime',
   'dart/core'
 ], /* Lazy imports */[
-], function(exports, core) {
+], function(exports, dart, core) {
   'use strict';
-  let _c = Symbol('_c');
+  let dartx = dart.dartx;
+  const _c = Symbol('_c');
   class A extends core.Object {
     A() {
       this[_c] = 3;
@@ -15,22 +17,28 @@ dart.library('methods', null, /* Imports */[
       return a;
     }
     z(b) {
-      if (b === void 0)
-        b = null;
-      return b;
+      if (b === void 0) b = null;
+      return dart.asInt(b);
     }
     zz(b) {
-      if (b === void 0)
-        b = 0;
+      if (b === void 0) b = 0;
       return b;
     }
     w(a, opts) {
       let b = opts && 'b' in opts ? opts.b : null;
-      return dart.notNull(a) + dart.notNull(b);
+      return dart.asInt(dart.notNull(a) + dart.notNull(b));
     }
     ww(a, opts) {
       let b = opts && 'b' in opts ? opts.b : 0;
       return dart.notNull(a) + dart.notNull(b);
+    }
+    clashWithObjectProperty(opts) {
+      let constructor = opts && 'constructor' in opts ? opts.constructor : null;
+      return constructor;
+    }
+    clashWithJsReservedName(opts) {
+      let func = opts && 'function' in opts ? opts.function : null;
+      return func;
     }
     get a() {
       return this.x();
@@ -50,7 +58,9 @@ dart.library('methods', null, /* Imports */[
       z: [core.int, [], [core.num]],
       zz: [core.int, [], [core.int]],
       w: [core.int, [core.int], {b: core.num}],
-      ww: [core.int, [core.int], {b: core.int}]
+      ww: [core.int, [core.int], {b: core.int}],
+      clashWithObjectProperty: [dart.dynamic, [], {constructor: dart.dynamic}],
+      clashWithJsReservedName: [dart.dynamic, [], {function: dart.dynamic}]
     })
   });
   class Bar extends core.Object {
@@ -59,7 +69,7 @@ dart.library('methods', null, /* Imports */[
     }
   }
   dart.setSignature(Bar, {
-    methods: () => ({call: [core.Object, [core.Object]]})
+    methods: () => ({call: [dart.dynamic, [dart.dynamic]]})
   });
   class Foo extends core.Object {
     Foo() {
@@ -73,6 +83,10 @@ dart.library('methods', null, /* Imports */[
     let g = dart.bind(a, 'x');
     let aa = new A();
     let h = dart.dload(aa, 'x');
+    let ts = dart.fn(dart.toString.bind(a), core.String, []);
+    let nsm = dart.fn(dart.noSuchMethod.bind(a), dart.dynamic, [core.Invocation]);
+    let c = dart.bind("", dartx.padLeft);
+    let r = dart.bind(3.0, dartx.floor);
   }
   dart.fn(test);
   // Exports:

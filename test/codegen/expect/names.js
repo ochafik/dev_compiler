@@ -1,17 +1,19 @@
-dart.library('names', null, /* Imports */[
+dart_library.library('names', null, /* Imports */[
+  'dart/_runtime',
   'dart/core'
 ], /* Lazy imports */[
-], function(exports, core) {
+], function(exports, dart, core) {
   'use strict';
+  let dartx = dart.dartx;
   exports.exports = 42;
-  let _foo$ = Symbol('_foo');
+  const _foo$ = Symbol('_foo');
   class Foo extends core.Object {
     [_foo$]() {
       return 123;
     }
   }
   dart.setSignature(Foo, {
-    methods: () => ({[_foo$]: [core.Object, []]})
+    methods: () => ({[_foo$]: [dart.dynamic, []]})
   });
   function _foo() {
     return 456;
@@ -28,7 +30,7 @@ dart.library('names', null, /* Imports */[
   dart.defineNamedConstructor(Frame, 'caller');
   dart.setSignature(Frame, {
     constructors: () => ({caller: [Frame, [core.List]]}),
-    statics: () => ({callee: [core.Object, []]}),
+    statics: () => ({callee: [dart.dynamic, []]}),
     names: ['callee']
   });
   class Frame2 extends core.Object {}

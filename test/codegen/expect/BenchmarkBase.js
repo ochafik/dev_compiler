@@ -1,30 +1,32 @@
-dart.library('BenchmarkBase', null, /* Imports */[
+dart_library.library('BenchmarkBase', null, /* Imports */[
+  'dart/_runtime',
   'dart/core'
 ], /* Lazy imports */[
-], function(exports, core) {
+], function(exports, dart, core) {
   'use strict';
+  let dartx = dart.dartx;
   class Expect extends core.Object {
     static equals(expected, actual) {
       if (!dart.equals(expected, actual)) {
-        throw `Values not equal: ${expected} vs ${actual}`;
+        dart.throw(`Values not equal: ${expected} vs ${actual}`);
       }
     }
     static listEquals(expected, actual) {
-      if (expected.length != actual.length) {
-        throw `Lists have different lengths: ${expected.length} vs ${actual.length}`;
+      if (expected[dartx.length] != actual[dartx.length]) {
+        dart.throw(`Lists have different lengths: ${expected[dartx.length]} vs ${actual[dartx.length]}`);
       }
-      for (let i = 0; dart.notNull(i) < dart.notNull(actual.length); i = dart.notNull(i) + 1) {
+      for (let i = 0; i < dart.notNull(actual[dartx.length]); i++) {
         Expect.equals(expected[dartx.get](i), actual[dartx.get](i));
       }
     }
     fail(message) {
-      throw message;
+      dart.throw(message);
     }
   }
   dart.setSignature(Expect, {
-    methods: () => ({fail: [core.Object, [core.Object]]}),
+    methods: () => ({fail: [dart.dynamic, [dart.dynamic]]}),
     statics: () => ({
-      equals: [dart.void, [core.Object, core.Object]],
+      equals: [dart.void, [dart.dynamic, dart.dynamic]],
       listEquals: [dart.void, [core.List, core.List]]
     }),
     names: ['equals', 'listEquals']
@@ -38,7 +40,7 @@ dart.library('BenchmarkBase', null, /* Imports */[
       this.run();
     }
     exercise() {
-      for (let i = 0; dart.notNull(i) < 10; i = dart.notNull(i) + 1) {
+      for (let i = 0; i < 10; i++) {
         this.run();
       }
     }
@@ -53,9 +55,9 @@ dart.library('BenchmarkBase', null, /* Imports */[
       while (dart.notNull(elapsed) < dart.notNull(timeMinimum)) {
         dart.dcall(f);
         elapsed = watch.elapsedMilliseconds;
-        iter = dart.notNull(iter) + 1;
+        iter++;
       }
-      return 1000.0 * dart.notNull(elapsed) / dart.notNull(iter);
+      return 1000.0 * dart.notNull(elapsed) / iter;
     }
     measure() {
       this.setup();

@@ -1,14 +1,16 @@
-dart.library('fieldtest', null, /* Imports */[
+dart_library.library('fieldtest', null, /* Imports */[
+  'dart/_runtime',
   'dart/core'
 ], /* Lazy imports */[
-], function(exports, core) {
+], function(exports, dart, core) {
   'use strict';
+  let dartx = dart.dartx;
   class A extends core.Object {
     A() {
       this.x = 42;
     }
   }
-  let B$ = dart.generic(function(T) {
+  const B$ = dart.generic(function(T) {
     class B extends core.Object {
       B() {
         this.x = null;
@@ -28,11 +30,11 @@ dart.library('fieldtest', null, /* Imports */[
     core.print(dart.dload(a, 'x'));
     return dart.as(dart.dload(a, 'x'), core.int);
   }
-  dart.fn(bar, core.int, [core.Object]);
+  dart.fn(bar, core.int, [dart.dynamic]);
   function baz(a) {
     return a.x;
   }
-  dart.fn(baz, core.Object, [A]);
+  dart.fn(baz, dart.dynamic, [A]);
   function compute() {
     return 123;
   }
@@ -66,7 +68,7 @@ dart.library('fieldtest', null, /* Imports */[
     }
   }
   dart.virtualField(Derived, 'foo');
-  let Generic$ = dart.generic(function(T) {
+  const Generic$ = dart.generic(function(T) {
     class Generic extends core.Object {
       foo(t) {
         dart.as(t, T);
@@ -74,28 +76,63 @@ dart.library('fieldtest', null, /* Imports */[
       }
     }
     dart.setSignature(Generic, {
-      methods: () => ({foo: [core.Object, [T]]})
+      methods: () => ({foo: [dart.dynamic, [T]]})
     });
+    Generic.bar = 'hello';
     return Generic;
   });
   let Generic = Generic$();
-  Generic.bar = 'hello';
   class StaticFieldOrder1 extends core.Object {}
   StaticFieldOrder1.d = 4;
-  StaticFieldOrder1.c = dart.notNull(StaticFieldOrder1.d) + 2;
-  StaticFieldOrder1.b = dart.notNull(StaticFieldOrder1.c) + 3;
-  StaticFieldOrder1.a = dart.notNull(StaticFieldOrder1.b) + 1;
+  dart.defineLazyProperties(StaticFieldOrder1, {
+    get a() {
+      return dart.notNull(StaticFieldOrder1.b) + 1;
+    },
+    get c() {
+      return dart.notNull(StaticFieldOrder1.d) + 2;
+    },
+    get b() {
+      return dart.notNull(StaticFieldOrder1.c) + 3;
+    }
+  });
   class StaticFieldOrder2 extends core.Object {}
   StaticFieldOrder2.d = 4;
-  StaticFieldOrder2.c = dart.notNull(StaticFieldOrder2.d) + 2;
-  StaticFieldOrder2.b = dart.notNull(StaticFieldOrder2.c) + 3;
-  StaticFieldOrder2.a = dart.notNull(StaticFieldOrder2.b) + 1;
+  dart.defineLazyProperties(StaticFieldOrder2, {
+    get a() {
+      return dart.notNull(StaticFieldOrder2.b) + 1;
+    },
+    get c() {
+      return dart.notNull(StaticFieldOrder2.d) + 2;
+    },
+    get b() {
+      return dart.notNull(StaticFieldOrder2.c) + 3;
+    }
+  });
+  class MyEnum extends core.Object {
+    MyEnum(index) {
+      this.index = index;
+    }
+    toString() {
+      return {
+        0: "MyEnum.Val1",
+        1: "MyEnum.Val2",
+        2: "MyEnum.Val3",
+        3: "MyEnum.Val4"
+      }[this.index];
+    }
+  };
+  MyEnum.Val1 = dart.const(new MyEnum(0));
+  MyEnum.Val2 = dart.const(new MyEnum(1));
+  MyEnum.Val3 = dart.const(new MyEnum(2));
+  MyEnum.Val4 = dart.const(new MyEnum(3));
+  MyEnum.values = dart.const(dart.list([MyEnum.Val1, MyEnum.Val2, MyEnum.Val3, MyEnum.Val4], MyEnum));
   function main() {
     let a = new A();
     foo(a);
     bar(a);
     core.print(baz(a));
     core.print(new (Generic$(core.String))().foo(' world'));
+    core.print(MyEnum.values);
   }
   dart.fn(main, dart.void, []);
   // Exports:
@@ -112,5 +149,6 @@ dart.library('fieldtest', null, /* Imports */[
   exports.Generic = Generic;
   exports.StaticFieldOrder1 = StaticFieldOrder1;
   exports.StaticFieldOrder2 = StaticFieldOrder2;
+  exports.MyEnum = MyEnum;
   exports.main = main;
 });

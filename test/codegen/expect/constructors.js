@@ -1,8 +1,10 @@
-dart.library('constructors', null, /* Imports */[
+dart_library.library('constructors', null, /* Imports */[
+  'dart/_runtime',
   'dart/core'
 ], /* Lazy imports */[
-], function(exports, core) {
+], function(exports, dart, core) {
   'use strict';
+  let dartx = dart.dartx;
   class A extends core.Object {}
   class B extends core.Object {
     B() {
@@ -59,8 +61,7 @@ dart.library('constructors', null, /* Imports */[
   });
   class G extends core.Object {
     G(p1) {
-      if (p1 === void 0)
-        p1 = null;
+      if (p1 === void 0) p1 = null;
     }
   }
   dart.setSignature(G, {
@@ -119,7 +120,7 @@ dart.library('constructors', null, /* Imports */[
     }
   }
   dart.setSignature(L, {
-    constructors: () => ({L: [L, [core.Object]]})
+    constructors: () => ({L: [L, [dart.dynamic]]})
   });
   class M extends L {
     named(x) {
@@ -159,7 +160,7 @@ dart.library('constructors', null, /* Imports */[
       bar: [P, []]
     })
   });
-  let Q$ = dart.generic(function(T) {
+  const Q$ = dart.generic(function(T) {
     class Q extends core.Object {
       Q(y) {
         this.x = dart.as(y, T);
@@ -181,7 +182,7 @@ dart.library('constructors', null, /* Imports */[
       }
     }
     dart.setSignature(Q, {
-      constructors: () => ({Q: [Q$(T), [core.Object]]}),
+      constructors: () => ({Q: [Q$(T), [dart.dynamic]]}),
       methods: () => ({
         bar: [core.String, []],
         bar2: [core.String, []]

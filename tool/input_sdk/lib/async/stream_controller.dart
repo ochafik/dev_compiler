@@ -81,8 +81,8 @@ abstract class StreamController<T> implements StreamSink<T> {
     if (onListen == null && onPause == null &&
         onResume == null && onCancel == null) {
       return sync
-          ? new _NoCallbackSyncStreamController/*<T>*/()
-          : new _NoCallbackAsyncStreamController/*<T>*/();
+          ? new _NoCallbackSyncStreamController<T>()
+          : new _NoCallbackAsyncStreamController<T>();
     }
     return sync
          ? new _SyncStreamController<T>(onListen, onPause, onResume, onCancel)
@@ -650,11 +650,11 @@ abstract class _NoCallbacks {
   _NotificationHandler get _onCancel => null;
 }
 
-class _NoCallbackAsyncStreamController/*<T>*/ = _StreamController/*<T>*/
-       with _AsyncStreamControllerDispatch/*<T>*/, _NoCallbacks;
+class _NoCallbackAsyncStreamController<T> = _StreamController<T>
+       with _AsyncStreamControllerDispatch<T>, _NoCallbacks;
 
-class _NoCallbackSyncStreamController/*<T>*/ = _StreamController/*<T>*/
-       with _SyncStreamControllerDispatch/*<T>*/, _NoCallbacks;
+class _NoCallbackSyncStreamController<T> = _StreamController<T>
+       with _SyncStreamControllerDispatch<T>, _NoCallbacks;
 
 typedef _NotificationHandler();
 
@@ -772,12 +772,12 @@ class _AddStreamState<T> {
    * Return a future if the cancel takes time, otherwise return `null`.
    */
   Future cancel() {
-    var cancel = addSubscription.cancel();
-    if (cancel == null) {
+    var cancel2 = addSubscription.cancel();
+    if (cancel2 == null) {
       addStreamFuture._asyncComplete(null);
       return null;
     }
-    return cancel.whenComplete(() { addStreamFuture._asyncComplete(null); });
+    return cancel2.whenComplete(() { addStreamFuture._asyncComplete(null); });
   }
 
   void complete() {

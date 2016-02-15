@@ -2,18 +2,13 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-/// This library provides a single function called injectLogs which when called
-/// will request a logs json file and build a small widget out of them which
-/// groups the logs by level.
-library polymer.build.log_injector;
+/// This library displays [MessageSummary]s from the Dart Dev Compiler.
 
-import 'dart:async';
 import 'dart:convert';
 import 'dart:html';
 
-import 'package:path/path.dart' as path;
-import 'package:source_span/source_span.dart';
 import 'package:dev_compiler/src/summary.dart';
+import 'package:source_span/source_span.dart';
 
 main() async {
   await window.animationFrame;
@@ -60,13 +55,12 @@ void displayMessages(String data) {
             '  <span class="location">${span.start.toolString}</span></div>'
             '  <span class="text">');
         if (span is SourceSpanWithContext) {
-          var context = span.context;
-          var text = span.text;
-          sb.write(_escape(context.substring(0, span.start.column)));
+          sb.write(_escape(span.context.substring(0, span.start.column)));
           sb.write('<span class="$level">');
           sb.write(_escape(span.text));
           sb.write('</span>');
-          sb.write(_escape(context.substring(span.end.column)));
+          var end = span.start.column + span.text.length;
+          sb.write(_escape(span.context.substring(end)));
         } else {
           sb.write(_escape(span.text));
         }
@@ -76,7 +70,7 @@ void displayMessages(String data) {
 
       var logElement = new Element.html('$sb',
           validator: new NodeValidatorBuilder.common()
-        ..allowNavigation(new _OpenUriPolicy()));
+            ..allowNavigation(new _OpenUriPolicy()));
       contentItem.append(logElement);
       var messageElement = logElement.querySelector('div.text');
       messageElement.onClick.listen((e) {
